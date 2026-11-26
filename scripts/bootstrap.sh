@@ -215,16 +215,32 @@ if ! docker exec hermes hermes plugins list 2>/dev/null | grep -qi hindsight; th
   docker compose restart hermes
 fi
 
-# ── Phase 4: local models (slow first time: downloads) ───────────────────────
+# ── Phase 4: local models (slow first time: downloads ~19 GB) ────────────────
 # autocomplete first: on the GPU, llm-coder's --fit sizes itself around it.
 MODELS=""
 docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete"
 docker compose config --services | grep -qx llm-coder        && MODELS="$MODELS llm-coder"
 MODEL_FAILED=""
+# The .gguf is downloaded here, before the container starts (fetch_hub_model in
+# lib.sh), when the profile names a Docker Hub source (MODEL_DOCKER_REPO).
+ensure_model() {
+  local envf="$1.env" src file
+  src="$(profile_var "$PROFILE" "$envf" MODEL_DOCKER_REPO)"
+  file="$(profile_var "$PROFILE" "$envf" LLAMA_ARG_MODEL)"
+  [[ -n "$file" ]] || return 0             # llama.cpp downloads it (e.g. LLAMA_ARG_HF_REPO)
+  [[ "$file" == /root/.cache/* ]] || { warn "$1: LLAMA_ARG_MODEL must be under /root/.cache (= data/models)"; return 1; }
+  if [[ -n "$src" ]]; then
+    fetch_hub_model "$src" "$ROOT/data/models/${file#/root/.cache/}"
+  elif [[ ! -f "data/models/${file#/root/.cache/}" ]]; then
+    warn "$1: data/models/${file#/root/.cache/} not found. Copy the .gguf there (docs/models.md) or set MODEL_DOCKER_REPO."
+    return 1
+  fi
+}
 for svc in $MODELS; do
   c="ai-$svc"
   timeout=1800; [[ "$svc" == llm-coder ]] && timeout=7200   # ~19 GB on a slow link
-  log "Starting $svc (first start downloads the model; progress below)…"
+  if ! ensure_model "$svc"; then MODEL_FAILED="$svc"; break; fi
+  log "Starting $svc…"
   docker compose up -d "$svc"
   if wait_healthy "$c" "$timeout" "$svc"; then
     log "$svc is healthy"

@@ -6,13 +6,18 @@ All defaults are Apache-2.0 (commercial use OK). Avoid Qwen2.5-Coder-**3B**: unl
 
 ## Where the model comes from: Docker Hub
 
-`huggingface.co` is blocked on the corporate network, so the model is pulled from **Docker Hub's `ai/` namespace**. Docker publishes GGUF models there, and llama.cpp downloads them natively (`LLAMA_ARG_DOCKER_REPO`). Docker Hub is already reachable, since the stack's images come from there.
+`huggingface.co` is blocked on the corporate network, so the model is pulled from **Docker Hub's `ai/` namespace**, which is already reachable (the stack's images come from there).
 
 ```
-LLAMA_ARG_DOCKER_REPO=ai/qwen3-coder:30b-a3b-q4_K_M      # 18.56 GB, both profiles share the file
+MODEL_DOCKER_REPO=ai/qwen3-coder:30b-a3b-q4_K_M                            # 18.56 GB, both profiles share the file
+LLAMA_ARG_MODEL=/root/.cache/gguf/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf  # where it is saved (data/models/gguf/)
 ```
 
-Other tags: <https://hub.docker.com/r/ai/qwen3-coder/tags> (e.g. `30B-A3B-UD-Q4_K_XL`, 17.67 GB; `30b-a3b-q8_0`). On a network where Hugging Face works, swap the line for the commented `LLAMA_ARG_HF_REPO=` one in the same file. Anonymous Docker Hub downloads are rate-limited per IP. `bootstrap.sh` recognises that error and says so.
+`scripts/bootstrap.sh` downloads the `.gguf` itself before it starts `llm-coder`: it reads the tag's manifest, fetches the model layer with a progress bar, checks its sha256 and saves it to `LLAMA_ARG_MODEL` (`/root/.cache` is `data/models` on the host). An interrupted download is kept as `.part` and resumed on the next run. Once the file is there, start-up needs no network.
+
+Why not llama.cpp's own `LLAMA_ARG_DOCKER_REPO`: Docker Hub now publishes `ai/` models as CNCF ModelPack artifacts (layer type `application/vnd.cncf.model.weight.v1.raw`), and llama.cpp only accepts `gguf` layer types. It fails with `No GGUF layer found in Docker manifest`.
+
+Other tags: <https://hub.docker.com/r/ai/qwen3-coder/tags> (e.g. `30B-A3B-UD-Q4_K_XL`, 17.67 GB; `30b-a3b-q8_0`). To switch, change both lines (the file name is up to you). Only single-file models are supported. On a network where Hugging Face works, comment out both lines and use the commented `LLAMA_ARG_HF_REPO=` one in the same file. Anonymous Docker Hub requests are rate-limited per IP; the model costs one manifest request per run, and `bootstrap.sh` says so if it hits the limit.
 
 ## One model for every route
 
@@ -88,9 +93,9 @@ Caveat: open-weight releases move fast, and this comparison reflects the models 
    mkdir -p data/models/gguf
    cp /mnt/c/Users/<you>/Downloads/*.gguf data/models/gguf/
    ```
-2. In `profiles/<profile>/llm-coder.env`, comment out `LLAMA_ARG_DOCKER_REPO` and point at the file:
+2. In `profiles/<profile>/llm-coder.env`, comment out `MODEL_DOCKER_REPO` and point at the file:
    ```
-   # LLAMA_ARG_DOCKER_REPO=...
+   # MODEL_DOCKER_REPO=...
    LLAMA_ARG_MODEL=/root/.cache/gguf/<file-name>.gguf
    ```
 3. Run `scripts/bootstrap.sh` again.
