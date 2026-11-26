@@ -75,7 +75,7 @@ elif [[ "$(get_env PROFILE_SUM)" != "$PROFILE_SUM" ]]; then
   # Same profile, but its file changed (e.g. after git pull): re-apply the
   # resource and structure keys. Routes, keys and secrets in .env are kept.
   while IFS= read -r line; do
-    [[ "$line" =~ ^(STACK_[A-Z]+|BUDGET_EXEMPT|COMPOSE_FILE|[A-Z]+_CPUS|[A-Z]+_MEM)= ]] || continue
+    [[ "$line" =~ ^(STACK_[A-Z_]+|BUDGET_EXEMPT|COMPOSE_FILE|[A-Z]+_CPUS|[A-Z]+_MEM)= ]] || continue
     if [[ "$(get_env "${line%%=*}")" != "${line#*=}" ]]; then
       log "Profile update: ${line%%=*} $(get_env "${line%%=*}") → ${line#*=}"
       set_env "${line%%=*}" "${line#*=}"
