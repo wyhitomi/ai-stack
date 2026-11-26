@@ -67,6 +67,7 @@ Step-by-step: **[docs/setup-wsl.md](docs/setup-wsl.md)**
 ```bash
 # in the Ubuntu (WSL) terminal — not PowerShell, not under /mnt/c
 cd ~ && git clone https://github.com/wyhitomi/ai-stack.git && cd ~/ai-stack
+scripts/install-docker-wsl.sh              # Docker + NVIDIA toolkit (once; may ask for `wsl --shutdown`)
 scripts/bootstrap.sh                       # gpu profile (or: --profile cpu)
 docker compose logs -f llm-coder           # first start downloads the model (~19 GB)
 scripts/doctor.sh                          # budget + every hop + a real inference
@@ -140,7 +141,7 @@ profiles/{gpu,cpu}/       stack.env (budget, binds, compose file) + llm-*.env (m
 litellm/config.yaml       model routes, fallbacks, logging
 postgres/init/            first-boot DB/role/extension setup
 hermes/                   Hermes config template + Hindsight plugin config
-scripts/                  bootstrap, doctor (health + budget), new-key, check-compose (cpu/gpu parity)
+scripts/                  install-docker-wsl, bootstrap, doctor (health + budget), new-key, check-compose
 windows/                  .wslconfig + home-LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
 docs/                     setup-wsl, models, resources, vscode

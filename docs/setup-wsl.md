@@ -46,27 +46,23 @@ The container limits are ceilings, not reservations. At idle, Hermes, Hindsight,
 
 Two options. Pick one.
 
-**A) Docker Engine inside WSL (recommended).** It's lighter and doesn't need Docker Desktop running or a license.
+**A) Docker Engine inside WSL (recommended).** It's lighter and doesn't need Docker Desktop running or a license. One script does it all, from the Ubuntu terminal, as your normal user (it calls `sudo` itself):
 
 ```bash
-# Docker Engine
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER && newgrp docker
-
-# NVIDIA Container Toolkit (GPU profile)
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt update && sudo apt install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
-
-# systemd must be on (default on recent Ubuntu WSL images). Check /etc/wsl.conf:
-#   [boot]
-#   systemd=true
-
-docker run --rm --gpus all ubuntu:24.04 nvidia-smi   # must show the GPU, CUDA >= 12.8
+cd ~/ai-stack
+scripts/install-docker-wsl.sh            # Docker Engine + Compose + NVIDIA Container Toolkit
+scripts/install-docker-wsl.sh --no-gpu   # without GPU support (cpu profile only)
+scripts/install-docker-wsl.sh --check    # just report what is installed
 ```
+
+What it does, skipping anything already done:
+
+1. Checks that it's running on Ubuntu in WSL2, and that Docker Desktop's WSL integration isn't active (the two conflict).
+2. Turns on systemd in `/etc/wsl.conf` if needed. Run `wsl --shutdown` in PowerShell, reopen Ubuntu, and run the script again.
+3. Installs Docker Engine, buildx and the Compose plugin from Docker's official apt repository, with container log rotation (10 MB × 3 per container).
+4. Installs the NVIDIA Container Toolkit and registers it with Docker. This needs the Windows NVIDIA driver ≥ R570; don't install a Linux driver.
+5. Adds you to the `docker` group. Reopen the terminal afterwards.
+6. Verifies by running `hello-world` and `nvidia-smi` inside a container.
 
 **B) Docker Desktop** with the WSL2 backend and WSL integration on for your distro. GPU support is built in. Docker Desktop publishes ports on Windows directly, so in step 4 only the regular Windows firewall rule matters.
 
