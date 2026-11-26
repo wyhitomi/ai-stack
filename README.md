@@ -145,8 +145,18 @@ scripts/                  install-docker-wsl, bootstrap, doctor (health + budget
 windows/                  .wslconfig + home-LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
 docs/                     setup-wsl, models, resources, vscode
+CONTRIBUTING.md           Conventional Commits + branch naming (hook: .githooks/commit-msg)
+CLAUDE.md                 the same rules for AI coding assistants
 LICENSE                   BSD 3-Clause
 data/                     runtime state (git-ignored)
+```
+
+## Contributing
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org), and branches are named `<type>/<short-description>`. See [CONTRIBUTING.md](CONTRIBUTING.md). To enforce the format locally:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## License
