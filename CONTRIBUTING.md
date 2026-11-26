@@ -53,8 +53,10 @@ git config core.hooksPath .githooks
 
 `.githooks/commit-msg` then rejects messages that don't match the format.
 
-## Branches
+## Branches and pull requests
 
-- `main` is the integration branch.
-- Topic branches are named `<type>/<short-description>` with the same types as commits, e.g. `feat/cloud-fallback`, `fix/crlf-checkout`, `docs/vscode-setup`.
+- `main` is the integration branch. **Every change reaches it through a pull request.** Nobody commits or pushes to `main` directly.
+- Work on a topic branch named `<type>/<short-description>`, with the same types as commits, e.g. `feat/cloud-fallback`, `fix/crlf-checkout`, `docs/vscode-setup`.
 - **Branch names never reference tools, assistants or vendors** (no `claude/…`, `copilot/…`, `ai/…`). They describe the change.
+- Open the PR from that branch to `main` and fill in the template (`.github/pull_request_template.md`). The PR title is a Conventional Commit subject, since it becomes the squash-merge commit.
+- Prefer **squash merge**, so `main` gets one conventional commit per PR. Delete the branch after merging.
