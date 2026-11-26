@@ -82,6 +82,7 @@ litellm_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  database_connection_pool_limit: 5   # fits the 768 MB Postgres (max_connections=60)
   # Don't store prompt/response bodies in Postgres (your code stays out of the DB).
   # Flip to false if you want full request logs in the UI.
   disable_spend_logs: false

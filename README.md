@@ -1,6 +1,6 @@
 # ai-stack
 
-A self-hosted AI-assisted development stack that runs in Docker inside WSL2. VS Code on any machine on your LAN can reach it.
+A self-hosted AI-assisted development stack. Every component runs as a Docker container inside WSL2, and VS Code on any machine on your LAN can reach it. All services except the local model share a hard **4 CPU / 7 GB RAM** budget.
 
 | Layer | Component | Role |
 |---|---|---|
@@ -41,12 +41,14 @@ flowchart LR
 - **Hermes is also a "model" in LiteLLM** (`hermes-agent`). A LAN client needs one URL and one key, and can pick the raw model for speed or the agent for multi-step work.
 - **Only two ports reach the LAN:** `4000` (LiteLLM) and `8642` (Hermes, optional). Postgres, the model servers and Hindsight stay internal or on `127.0.0.1`.
 - **The workspace is mounted at the same path** inside Hermes, so paths in the agent's output match VS Code.
+- **Hard resource envelope.** Every service except `llm-coder` has a cgroup CPU and memory limit, and together they add up to 4 CPU / 7 GB. The local model is the only service allowed to use more. Details and tuning: [docs/resources.md](docs/resources.md).
 
 ## Requirements
 
-- Windows 11 + WSL2 (Ubuntu 24.04), Docker Engine in WSL **or** Docker Desktop
+- Windows 11 + WSL2 (Ubuntu 24.04), Docker Engine in WSL **or** Docker Desktop. On the host you only need **bash + Docker**: everything else, including the HTTP calls the scripts make, runs in containers.
 - NVIDIA GPU; **24 GB VRAM** for the defaults (other sizes: [docs/models.md](docs/models.md))
-- 32 GB+ RAM, ~40 GB disk for images and models
+- CPU/RAM: **4 CPU / 7 GB** for the stack, plus what the model needs. With full GPU offload, a WSL VM of 8 CPU / 12 GB is enough (`windows/wslconfig.example`).
+- ~40 GB disk for images and models
 
 Setting up Docker, GPU and LAN on WSL: **[docs/wsl-lan.md](docs/wsl-lan.md)**
 
@@ -122,9 +124,14 @@ compose.cpu.yml           CPU-only override
 litellm/config.yaml       model routes, fallbacks, logging
 postgres/init/            first-boot DB/role/extension setup
 hermes/                   Hermes config template + Hindsight plugin config
-scripts/                  bootstrap, doctor, new-key
+scripts/                  bootstrap, doctor (health + budget check), new-key
 windows/                  .wslconfig + LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
-docs/                     WSL/LAN, models, VS Code guides
+docs/                     WSL/LAN, models, resources, VS Code guides
+LICENSE                   BSD 3-Clause
 data/                     runtime state (git-ignored)
 ```
+
+## License
+
+[BSD 3-Clause](LICENSE). The components the stack pulls (Hermes Agent, LiteLLM, llama.cpp, Hindsight, PostgreSQL, and the model weights) keep their own licenses.

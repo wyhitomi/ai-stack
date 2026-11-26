@@ -9,6 +9,8 @@ Two llama.cpp servers run side by side:
 
 Clients never see these names. LiteLLM exposes them as `coder` and `autocomplete`, so you can swap a model by editing `.env` and running `docker compose up -d llm-coder`.
 
+`llm-coder` is the only service outside the 4 CPU / 7 GB envelope ([resources.md](resources.md)). Offloading experts to the CPU (`--n-cpu-moe`) is allowed. It uses extra host RAM and CPU, so grow the WSL VM to match.
+
 ## Sizing by GPU VRAM
 
 Hermes needs **at least 64k context**, so the KV cache counts as much as the weights. `CODER_KV_TYPE=q8_0` roughly halves the cache.

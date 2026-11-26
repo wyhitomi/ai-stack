@@ -6,10 +6,15 @@
 networkingMode=mirrored
 # Lets Windows apps reach WSL services on localhost (and vice-versa).
 hostAddressLoopback=true
-# Give the models room. Tune to your machine (leave ~8 GB for Windows).
-memory=48GB
-processors=12
-swap=16GB
+# Size the VM = stack envelope + local model + OS overhead:
+#   memory     = 7 GB (stack, hard-capped by Docker) + model host RAM + ~1.5 GB
+#                model host RAM ≈ 2-3 GB with full GPU offload; add the size of
+#                the offloaded experts if you use --n-cpu-moe (docs/models.md)
+#   processors = 4 (stack, hard-capped by Docker) + threads for the model
+# The values below fit the default 24 GB-VRAM setup. Leave >= 6 GB for Windows.
+memory=12GB
+processors=8
+swap=8GB
 
 [experimental]
 # Return freed memory to Windows gradually.
