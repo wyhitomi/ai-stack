@@ -153,7 +153,7 @@ data/                     runtime state (git-ignored)
 
 ## Contributing
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org), and branches are named `<type>/<short-description>`. See [CONTRIBUTING.md](CONTRIBUTING.md). To enforce the format locally:
+Commits follow [Conventional Commits](https://www.conventionalcommits.org). Branches are named `<type>/<short-description>`, and every change reaches `main` through a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md). To enforce the format locally:
 
 ```bash
 git config core.hooksPath .githooks
