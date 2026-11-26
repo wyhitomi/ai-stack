@@ -49,7 +49,7 @@ flowchart LR
 - **Hermes is also a "model" in LiteLLM** (`hermes-agent`). A LAN client needs one URL and one key, and can pick the raw model for speed or the agent for multi-step work.
 - **Home LAN only.** Two ports are published, `4000` (LiteLLM) and `8642` (Hermes, optional). `windows/setup-lan.ps1` opens them in the Windows and Hyper-V firewalls to the home LAN subnet only, on the Private profile. Postgres and Hindsight's UI stay on `127.0.0.1`. The model servers publish no ports.
 - **The workspace is mounted at the same path** inside Hermes, so paths in the agent's output match VS Code.
-- **Hard resource limits.** Every service except the coding model is capped, together within 4 CPU / 7 GB. The coding model is the one service allowed to use more. `scripts/doctor.sh` checks this. Details: [docs/resources.md](docs/resources.md).
+- **Hard resource limits.** Every service except the coding model is capped, together within 4 CPU / 8.5 GB. The coding model is the one service allowed to use more. `scripts/doctor.sh` checks this. Details: [docs/resources.md](docs/resources.md).
 
 ## Requirements
 
