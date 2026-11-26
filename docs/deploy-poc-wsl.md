@@ -2,7 +2,7 @@
 
 Target machine: **16 CPU / 32 GB RAM / NVIDIA Blackwell GPU with 8 GB** (RTX 50xx class), Windows 11 + WSL2.
 
-The PoC runs every non-model service with **exactly the VPS limits**, so a passing PoC shows the stack fits the 4 vCPU / 8 GB VPS. Only the coding model differs. Here it uses the GPU and the spare RAM to run Qwen3-Coder-30B-A3B, where the VPS has to settle for a 1.5B model (see [models.md](models.md)).
+This is the only machine that runs models. The VPS has none and uses this machine's GPU over Tailscale (see [Serving the VPS](#serving-the-vps)). The PoC runs every non-model service with **exactly the VPS limits**, so a passing PoC also shows the stack fits the 4 vCPU / 8 GB VPS.
 
 Two profiles run on this machine, each with its own Compose file:
 
@@ -33,7 +33,7 @@ Copy `windows/wslconfig.example` to `%UserProfile%\.wslconfig` (`setup-lan.ps1` 
 
 | | WSL VM | Left for Windows | Why |
 |---|---|---|---|
-| memory | 26 GB | 6 GB | stack 4.9 GB (capped) + model ~18 GB (MoE experts in RAM) + ~2 GB kernel/dockerd |
+| memory | 27 GB | 5 GB | stack 6.9 GB (capped, same as the VPS) + model ~18 GB (MoE experts in RAM) + ~2 GB kernel/dockerd |
 | processors | 14 | 2 | stack caps ≤ 4 + 8 model threads + headroom |
 
 If Windows feels starved, switch the model to a smaller quant (docs/models.md) and lower `memory`.
@@ -108,3 +108,21 @@ With Docker Engine + systemd, `restart: unless-stopped` brings the stack back wh
 [wsl2]
 vmIdleTimeout=-1
 ```
+
+## Serving the VPS
+
+The VPS runs no model of its own. To let it use this GPU:
+
+1. Install Tailscale on Windows (or inside WSL) and join the same tailnet as the VPS.
+2. Publish the models on the Tailscale IP. Both servers require `CODER_API_KEY` on every request.
+   ```bash
+   scripts/bootstrap.sh --profile poc-wsl --serve-vps
+   ```
+3. Open the ports to Tailscale peers only. In PowerShell as Administrator:
+   ```powershell
+   .\windows\setup-lan.ps1 -ServeVps
+   ```
+   This needs mirrored networking, the script's default.
+4. Follow [deploy-vps.md](deploy-vps.md) with the key and IP printed in step 2.
+
+While the VPS uses it, keep this machine awake and on the tailnet. In Windows power settings, set sleep to *Never* while plugged in. In `.wslconfig`, `vmIdleTimeout=-1` stops WSL from shutting down when idle.

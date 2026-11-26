@@ -12,11 +12,17 @@
     * forwards Windows:<port> -> <WSL IP>:<port> with netsh portproxy
     * the WSL IP changes on every reboot: re-run this script (or schedule it at logon)
 
+.PARAMETER ServeVps
+  Also open the model servers (8080 llm-coder, 8081 llm-autocomplete) to
+  Tailscale addresses only (100.64.0.0/10), so the VPS can use this GPU.
+  Pair with: scripts/bootstrap.sh --profile poc-wsl --serve-vps
+
 .EXAMPLE
   # PowerShell as Administrator
   Set-ExecutionPolicy -Scope Process Bypass
   .\setup-lan.ps1                   # mirrored mode
   .\setup-lan.ps1 -Mode Nat         # NAT + portproxy
+  .\setup-lan.ps1 -ServeVps         # + let the VPS reach the models over Tailscale
   .\setup-lan.ps1 -Remove           # undo firewall rules / port proxies
 #>
 [CmdletBinding()]
@@ -26,6 +32,9 @@ param(
   # Restrict to your LAN. 'LocalSubnet' = same subnet as this PC.
   [string] $RemoteAddress = 'LocalSubnet',
   [string] $Distro = '',
+  [switch] $ServeVps,
+  [int[]] $ModelPorts = @(8080, 8081),
+  [string] $TailscaleRange = '100.64.0.0/10',
   [switch] $Remove
 )
 
@@ -44,7 +53,7 @@ function Remove-StackRules {
   if (Get-Command Get-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
     Get-NetFirewallHyperVRule -Name "$RulePrefix*" -ErrorAction SilentlyContinue | Remove-NetFirewallHyperVRule
   }
-  foreach ($p in $Ports) { netsh interface portproxy delete v4tov4 listenport=$p listenaddress=0.0.0.0 2>$null | Out-Null }
+  foreach ($p in ($Ports + $ModelPorts)) { netsh interface portproxy delete v4tov4 listenport=$p listenaddress=0.0.0.0 2>$null | Out-Null }
 }
 
 if ($Remove) { Remove-StackRules; Write-Host 'Removed ai-stack firewall rules and port proxies.'; return }
@@ -54,6 +63,16 @@ Remove-StackRules   # idempotent re-run
 # Regular Windows firewall — Private network profile only (never Public Wi-Fi).
 New-NetFirewallRule -DisplayName "$RulePrefix inbound" -Direction Inbound -Action Allow `
   -Protocol TCP -LocalPort $Ports -RemoteAddress $RemoteAddress -Profile Private | Out-Null
+
+# Model servers for the VPS: Tailscale peers only. Any profile, because the
+# Tailscale adapter is not always classified as a Private network. The
+# llama.cpp servers also require CODER_API_KEY on every request.
+if ($ServeVps) {
+  New-NetFirewallRule -DisplayName "$RulePrefix models (tailscale)" -Direction Inbound -Action Allow `
+    -Protocol TCP -LocalPort $ModelPorts -RemoteAddress $TailscaleRange -Profile Any | Out-Null
+  Write-Host "Opened ports $($ModelPorts -join ', ') to Tailscale peers ($TailscaleRange)"
+}
+$AllPorts = $Ports; if ($ServeVps) { $AllPorts = $Ports + $ModelPorts }
 
 if ($Mode -eq 'Mirrored') {
   $cfg = Join-Path $env:USERPROFILE '.wslconfig'
@@ -69,11 +88,11 @@ if ($Mode -eq 'Mirrored') {
   }
 
   if (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
-    foreach ($p in $Ports) {
+    foreach ($p in $AllPorts) {
       New-NetFirewallHyperVRule -Name "$RulePrefix-$p" -DisplayName "$RulePrefix $p" `
         -Direction Inbound -VMCreatorId $WslVmCreatorId -Protocol TCP -LocalPorts $p -Action Allow | Out-Null
     }
-    Write-Host "Opened Hyper-V firewall for WSL on ports $($Ports -join ', ')"
+    Write-Host "Opened Hyper-V firewall for WSL on ports $($AllPorts -join ', ')"
   } else {
     Write-Warning 'Hyper-V firewall cmdlets not found (older Windows). Use -Mode Nat instead.'
   }
@@ -84,10 +103,10 @@ else {
   $wslArgs = @(); if ($Distro) { $wslArgs = @('-d', $Distro) }
   $wslIp = (wsl @wslArgs -- hostname -I).Trim().Split(' ')[0]
   if (-not $wslIp) { throw 'Could not read the WSL IP. Is WSL running?' }
-  foreach ($p in $Ports) {
+  foreach ($p in $AllPorts) {
     netsh interface portproxy add v4tov4 listenport=$p listenaddress=0.0.0.0 connectport=$p connectaddress=$wslIp | Out-Null
   }
-  Write-Host "Forwarding ports $($Ports -join ', ') -> $wslIp"
+  Write-Host "Forwarding ports $($AllPorts -join ', ') -> $wslIp"
   Write-Warning 'The WSL IP changes on reboot. Re-run this script after each restart (or add it to Task Scheduler at logon).'
 }
 

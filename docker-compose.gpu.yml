@@ -83,12 +83,12 @@ services:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
-      # Optional: lets a VPS use this GPU for its `coder` route (docs/deploy-vps.md).
+      # Required key for every request (LiteLLM here and on the VPS send it).
       LLAMA_API_KEY: ${CODER_API_KEY:-}
     volumes:
       - ./data/models:/root/.cache
     ports:
-      # 127.0.0.1 by default. Set CODER_BIND to this machine's Tailscale IP to serve a VPS.
+      # 127.0.0.1 by default. `bootstrap.sh --serve-vps` sets the Tailscale IP.
       - "${CODER_BIND:-127.0.0.1}:${CODER_PORT:-8080}:8080"
     # Start after autocomplete so --fit sizes the coder around the VRAM it uses
     depends_on:
@@ -122,8 +122,12 @@ services:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
+      LLAMA_API_KEY: ${CODER_API_KEY:-}
     volumes:
       - ./data/models:/root/.cache
+    ports:
+      # Same bind as llm-coder: 127.0.0.1, or the Tailscale IP with --serve-vps
+      - "${CODER_BIND:-127.0.0.1}:${AUTOCOMPLETE_PORT:-8081}:8080"
     deploy:
       resources:
         limits:
@@ -224,9 +228,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${HINDSIGHT_CPUS:-0.75}"
-          memory: ${HINDSIGHT_MEM:-1536m}
-    memswap_limit: ${HINDSIGHT_MEM:-1536m}
+          cpus: "${HINDSIGHT_CPUS:-1.0}"
+          memory: ${HINDSIGHT_MEM:-2048m}
+    memswap_limit: ${HINDSIGHT_MEM:-2048m}
     networks: [ai]
 
   # ── Orchestration ──────────────────────────────────────────────────────────
@@ -264,8 +268,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${HERMES_CPUS:-1.0}"
-          memory: ${HERMES_MEM:-1536m}
+          cpus: "${HERMES_CPUS:-2.0}"
+          memory: ${HERMES_MEM:-3072m}
           pids: 1024           # stops a runaway fork bomb from the agent's shell
-    memswap_limit: ${HERMES_MEM:-1536m}
+    memswap_limit: ${HERMES_MEM:-3072m}
     networks: [ai]

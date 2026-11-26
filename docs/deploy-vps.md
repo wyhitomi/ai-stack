@@ -1,96 +1,84 @@
 # Deploying on the VPS (profile `vps`)
 
-Target: **4 vCPU / 8 GB RAM, no GPU**, Ubuntu 24.04 (or Debian 12). Everything runs inside that machine, model included, with a hard memory limit on every container:
+Target: **4 vCPU / 8 GB RAM, no GPU**, Ubuntu 24.04 (or Debian 12), using `docker-compose.cpu.yml`.
 
-| Service | Memory | CPU cap |
+**The VPS runs no model.** It hosts the orchestration stack (Hermes, Hindsight, LiteLLM, Postgres). Every model call goes over Tailscale to the **WSL PoC machine**, which runs the models on its GPU:
+
+```
+VS Code ──► VPS: LiteLLM :4000 ──(Tailscale, API key)──► WSL: llm-coder        :8080  coder, memory
+              │   Hermes · Hindsight · Postgres                   llm-autocomplete :8081  autocomplete
+```
+
+| Service (VPS) | Memory | CPU cap |
 |---|---:|---:|
 | postgres | 512 MB | 0.50 |
 | litellm | 768 MB | 0.50 |
-| hindsight | 1536 MB | 0.75 |
-| hermes | 1536 MB | 1.00 |
-| llm-coder (Qwen2.5-Coder-1.5B, 64k ctx) | 3072 MB | 3.00 |
-| **containers** | **7424 MB** | |
-| kernel, dockerd, sshd | ~768 MB | |
+| hindsight | 2048 MB | 1.00 |
+| hermes | 3072 MB | 2.00 |
+| **containers** | **6400 MB** | (budget 7424 MB) |
+| kernel, dockerd, sshd | ≥ 768 MB | |
 
-## What to expect on CPU
+Hermes gets the largest share because the agent's builds and tests run inside its container.
 
-This is the honest part. With 3 CPU threads, a 1.5B model generates **~15–25 tokens/s**. Prompt processing runs at **~100–200 tokens/s**. In practice:
+## What this means in practice
 
-- **Autocomplete and quick chat** work fine.
-- **Hermes agent turns are slow, and the small model is weak at tool calling.** Hermes' system prompt and tool schemas are long, so the first turn of a session can spend a minute or more reading the prompt. Later turns reuse the prompt cache. Expect simple tasks to work and complex multi-step ones to fail more often than on the PoC.
+- **The VPS needs the WSL machine online.** When the PoC is off, asleep or out of Tailscale, model calls fail. Hermes, Hindsight and LiteLLM keep running and recover by themselves when the PoC is back. For continuity, add a cloud fallback in `litellm/config.yaml` (`cloud-coder` + `fallbacks`, commented out).
+- **Data stays on your machines.** Prompts and memory extraction travel only between the VPS and the PoC, encrypted by Tailscale and protected by the llama.cpp API key. Nothing goes to a third party unless you enable a cloud fallback.
+- **Latency.** Over Tailscale, autocomplete adds one network round trip, usually 20–80 ms. Agent turns are dominated by generation time, so you won't notice the network there.
 
-To get PoC-level agent quality on the VPS, point `coder` at a GPU host. Keep the small local model for `autocomplete` and `memory`. It's one line in `.env`, since the routing lives in LiteLLM:
+## 1. On the WSL PoC: publish the models
 
-```bash
-# GPU host (e.g. the PoC machine), .env:
-CODER_BIND=100.a.b.c          # its Tailscale IP: never 0.0.0.0
-CODER_API_KEY=<random secret>  # e.g. head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'
-docker compose up -d llm-coder
-
-# VPS, .env:
-CODER_API_BASE=http://100.a.b.c:8080/v1
-CODER_API_KEY=<same secret>
-docker compose up -d litellm
-```
-
-The `memory` route always stays on the VPS's local model, so memory content never leaves the box.
-
-## Running without a local model
-
-The local model is **optional** on the CPU file (`vps`, `poc-wsl-cpu`). Without it, LiteLLM routes `coder`, `autocomplete` and `memory` to a remote OpenAI-compatible endpoint, and clients and Hermes don't notice the difference.
+Tailscale must run on the PoC: on Windows (simplest), or inside WSL. Bootstrap finds it either way.
 
 ```bash
-# 1. In .env, point `coder` somewhere (LiteLLM provider/model syntax):
-CODER_MODEL=openai/coder                       # a remote llama.cpp, e.g. the PoC GPU
-CODER_API_BASE=http://100.a.b.c:8080/v1        #   over Tailscale
-CODER_API_KEY=<the GPU host's CODER_API_KEY>
-#   …or a hosted open-weight provider:
-#   CODER_MODEL=openai/qwen/qwen3-coder   CODER_API_BASE=https://<provider>/v1   CODER_API_KEY=<key>
-
-# 2. Turn the local model off
-scripts/bootstrap.sh --local-model off
-docker compose up -d --remove-orphans          # stops the old llm-coder container
+# WSL, in ~/ai-stack
+scripts/bootstrap.sh --profile poc-wsl --serve-vps
 ```
 
-- `bootstrap.sh` refuses to turn the model off until `CODER_API_BASE` points at a real remote endpoint. It then redirects `autocomplete` and `memory` to the same endpoint, unless you set `AUTOCOMPLETE_*` / `MEMORY_*` yourself.
-- **Autocomplete** needs an endpoint that serves raw `/v1/completions` (FIM). llama.cpp does; many hosted chat APIs don't. Without one, turn autocomplete off in Continue.
-- **Privacy:** with the model off, Hindsight's memory extraction runs remotely, so conversation facts leave the VPS. `bootstrap.sh` warns you about this.
-- **Budget:** the 3 GB the model used becomes free. A good split is `HERMES_MEM=3072m` and `HINDSIGHT_MEM=2048m` in `.env` (still ≤ 7424 MB), then `docker compose up -d`.
-- Back to local: `scripts/bootstrap.sh --local-model on`. It restores every route to the local server.
+That binds `llm-coder` (:8080) and `llm-autocomplete` (:8081) to the PoC's **Tailscale IP only**. Both always require `CODER_API_KEY`, which bootstrap generates. At the end it prints the exact lines for the VPS.
 
-The GPU file (`poc-wsl`) always runs its local models; that's its purpose.
+Then, in PowerShell as Administrator on Windows:
 
-## Install
+```powershell
+.\windows\setup-lan.ps1 -ServeVps     # opens 8080/8081 to Tailscale peers (100.64.0.0/10) only
+```
+
+This needs WSL **mirrored networking** (the script's default mode), so the Tailscale IP is visible inside WSL. With Docker Desktop, ports are published on Windows directly, and the same firewall rule applies.
+
+## 2. On the VPS
 
 ```bash
 # Docker Engine + compose plugin (the only host dependency besides bash)
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && newgrp docker
 
+# Tailscale: lets the VPS reach the PoC, and VS Code reach the VPS
+curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
+
 # A small host swap file: a safety net for the OS only (containers can't swap)
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 git clone <this repo> ~/ai-stack && cd ~/ai-stack
-scripts/bootstrap.sh --profile vps
+cp .env.example .env
+echo "CODER_API_KEY=<value printed by the PoC bootstrap>" >> .env
+scripts/bootstrap.sh --profile vps --gpu-host <poc-tailscale-ip>
 scripts/doctor.sh
 ```
 
+`bootstrap.sh` refuses to continue in these cases:
+
+- the GPU host is still a placeholder
+- `CODER_API_KEY` is missing
+- you ask for `--local-model on`, since this profile has no local model
+
+`doctor.sh` then runs a real inference through the PoC, on both chat and autocomplete.
+
 ## Network: never on the public interface
 
-The VPS profile binds LiteLLM and Hermes to `127.0.0.1`. To reach them from VS Code, use either:
+LiteLLM and Hermes bind to the VPS's **Tailscale IP** (detected by bootstrap), or to `127.0.0.1` if Tailscale is missing. VS Code clients on your tailnet use `http://<vps-tailscale-ip>:4000/v1`. Without Tailscale, use an SSH tunnel: `ssh -N -L 4000:127.0.0.1:4000 you@vps`.
 
-**Tailscale (recommended).** Install it **before** `bootstrap.sh`, which then binds LiteLLM to the Tailscale IP automatically.
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
-```
-
-Clients on your tailnet use `http://<tailscale-ip>:4000/v1`. Traffic is encrypted end to end, with no open ports on the internet.
-
-**SSH tunnel** (no extra software): `ssh -N -L 4000:127.0.0.1:4000 you@vps`, then clients use `http://localhost:4000/v1`.
-
-Close everything else with the firewall:
+Close everything else:
 
 ```bash
 sudo ufw default deny incoming && sudo ufw allow OpenSSH && sudo ufw enable
@@ -98,8 +86,12 @@ sudo ufw default deny incoming && sudo ufw allow OpenSSH && sudo ufw enable
 
 Docker publishes ports through iptables and bypasses ufw. That's why the stack never binds to `0.0.0.0` on the VPS: the bind address is the real protection.
 
+## Using another GPU host or a hosted provider
+
+The routes are plain settings in `.env` (`CODER_*`, `AUTOCOMPLETE_*`, `MEMORY_*`: MODEL, API_BASE, API_KEY). Any OpenAI-compatible endpoint works, for example a GPU cloud VM running this repo's `poc-wsl` profile, or a hosted open-weight provider (`CODER_MODEL=openai/qwen/qwen3-coder`, `CODER_API_BASE=https://<provider>/v1`). With a hosted provider, Hindsight's memory extraction and your prompts leave your machines. Autocomplete then needs an endpoint that serves raw `/v1/completions` (FIM).
+
 ## Operating within 8 GB
 
 - `scripts/doctor.sh` fails if the memory limits add up to more than `STACK_MEM_MB` (7424), or if a container has no limit.
-- Hermes runs the agent's shell commands inside its 1.5 GB. A heavy `npm install` or test suite can get it OOM-killed (Docker restarts it). Check with `docker inspect hermes -f '{{.State.OOMKilled}}'`. If it happens often, run those builds in CI instead, or move memory from Hindsight (see [resources.md](resources.md)).
+- Hermes OOM-killed during a heavy build? Check with `docker inspect hermes -f '{{.State.OOMKilled}}'`. There are still ~1 GB unallocated in the budget: raise `HERMES_MEM` to 4096m.
 - Backups work the same as on the PoC (README → Day-to-day).

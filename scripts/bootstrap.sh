@@ -3,11 +3,15 @@
 # One-shot setup for ai-stack. Safe to re-run: it never overwrites existing
 # secrets, keys or Hermes config. Needs only bash + docker on the host.
 #
-#   scripts/bootstrap.sh --profile poc-wsl       # WSL2 + NVIDIA GPU  → docker-compose.gpu.yml
-#   scripts/bootstrap.sh --profile poc-wsl-cpu   # same box, CPU only → docker-compose.cpu.yml
-#   scripts/bootstrap.sh --profile vps           # 4 vCPU / 8 GB      → docker-compose.cpu.yml
-#   scripts/bootstrap.sh --profile vps --local-model off   # no local model (CPU file)
-#   scripts/bootstrap.sh                     # re-run with the profile in .env
+#   WSL PoC (runs the models):
+#     scripts/bootstrap.sh --profile poc-wsl                # GPU   → docker-compose.gpu.yml
+#     scripts/bootstrap.sh --profile poc-wsl --serve-vps    #   + publish models to the VPS (Tailscale)
+#     scripts/bootstrap.sh --profile poc-wsl-cpu            # CPU   → docker-compose.cpu.yml
+#     scripts/bootstrap.sh --profile poc-wsl-cpu --local-model off   # CPU file without a model
+#   VPS (no local model, uses the WSL GPU):
+#     scripts/bootstrap.sh --profile vps --gpu-host <wsl-tailscale-ip>
+#   Re-run with what is in .env:
+#     scripts/bootstrap.sh
 #
 #   1. creates .env from .env.example + the profile, generates every secret
 #   2. seeds data/hermes (config.yaml + Hindsight plugin config)
@@ -21,13 +25,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # ── Arguments ────────────────────────────────────────────────────────────────
 PROFILE=""
 LOCAL_MODEL_ARG=""
+GPU_HOST_ARG=""
+SERVE_VPS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --local-model) LOCAL_MODEL_ARG="${2:?--local-model needs on|off}"; shift 2 ;;
     --local-model=*) LOCAL_MODEL_ARG="${1#*=}"; shift ;;
     --profile) PROFILE="${2:?--profile needs a value}"; shift 2 ;;
     --profile=*) PROFILE="${1#*=}"; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --gpu-host) GPU_HOST_ARG="${2:?--gpu-host needs an IP or hostname}"; shift 2 ;;
+    --gpu-host=*) GPU_HOST_ARG="${1#*=}"; shift ;;
+    --serve-vps) SERVE_VPS=1; shift ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -57,34 +66,73 @@ if [[ "$(get_env STACK_PROFILE)" != "$PROFILE" ]]; then
   log "Applied profile '$PROFILE'"
 fi
 
-# ── Local model on/off (CPU file only) ───────────────────────────────────────
+# ── Tailscale address (VPS: LiteLLM bind · WSL: what the VPS connects to) ────
+tailscale_ip() {
+  local ip=""
+  command -v tailscale >/dev/null && ip="$(tailscale ip -4 2>/dev/null | head -1)"
+  # WSL with Tailscale installed on Windows: call the Windows CLI via interop
+  [[ -z "$ip" ]] && command -v tailscale.exe >/dev/null && ip="$(tailscale.exe ip -4 2>/dev/null | tr -d '\r' | head -1)"
+  echo "$ip"
+}
+HAS_LOCAL_MODEL_FILE=0; [[ -f "profiles/$PROFILE/llm-coder.env" ]] && HAS_LOCAL_MODEL_FILE=1
+IS_GPU=0; [[ "$(get_env COMPOSE_FILE)" == *gpu* ]] && IS_GPU=1
+
+# ── Local model on/off ───────────────────────────────────────────────────────
 case "$LOCAL_MODEL_ARG" in
   "") ;;
   on|true|yes)
+    (( HAS_LOCAL_MODEL_FILE )) || die "Profile '$PROFILE' has no local model (no profiles/$PROFILE/llm-coder.env). Models run on the WSL machine."
     set_env LOCAL_MODEL true
     # Back to fully local routes: profile defaults, no remote model/key overrides.
     for route in CODER AUTOCOMPLETE MEMORY; do
       set_env ${route}_API_BASE "$(grep -E "^${route}_API_BASE=" "profiles/$PROFILE/stack.env" | cut -d= -f2-)"
       set_env ${route}_MODEL ""; set_env ${route}_API_KEY ""
     done
-    log "Local model ON: all routes → local llama.cpp (set CODER_API_BASE again for a remote coder)" ;;
-  off|false|no) set_env LOCAL_MODEL false ;;
+    log "Local model ON: all routes → local llama.cpp" ;;
+  off|false|no)
+    (( IS_GPU )) && die "The GPU compose file always runs its local models. Use a CPU profile for --local-model off."
+    set_env LOCAL_MODEL false ;;
   *) die "--local-model takes on|off" ;;
 esac
-if [[ "$(get_env COMPOSE_FILE)" == *gpu* && "$(get_env LOCAL_MODEL)" == false ]]; then
-  die "The GPU compose file always runs its local models. Use a CPU profile for --local-model off."
+
+# ── GPU host: protect the model servers, optionally publish them for the VPS ─
+if (( IS_GPU )); then
+  # Always keyed: the ports may be published beyond localhost (--serve-vps).
+  [[ -n "$(get_env CODER_API_KEY)" ]] || { set_env CODER_API_KEY "llm-$(rand_hex 24)"; log "Generated CODER_API_KEY"; }
+  if (( SERVE_VPS )); then
+    TS_IP="$(tailscale_ip)"
+    [[ -n "$TS_IP" ]] || die "--serve-vps: no Tailscale IP found. Install Tailscale on Windows or in WSL, run 'tailscale up', then retry (docs/deploy-poc-wsl.md)."
+    set_env CODER_BIND "$TS_IP"
+    log "llm-coder :8080 and llm-autocomplete :8081 published on Tailscale IP $TS_IP (API key required)"
+  fi
+elif (( SERVE_VPS )); then
+  die "--serve-vps only applies to the GPU profile (poc-wsl)."
 fi
+
+# ── Remote routes (no local model) ───────────────────────────────────────────
 is_local() { [[ -z "$1" || "$1" == *llm-coder* || "$1" == *llm-autocomplete* ]]; }
 if [[ "$(get_env LOCAL_MODEL)" == false ]]; then
-  # Validate first, change nothing until the remote route is complete.
+  if [[ -n "$GPU_HOST_ARG" ]]; then
+    for route in CODER AUTOCOMPLETE MEMORY; do
+      cur="$(get_env ${route}_API_BASE)"
+      [[ "$cur" == *GPU_HOST* ]] && set_env ${route}_API_BASE "${cur//GPU_HOST/$GPU_HOST_ARG}"
+    done
+    log "Model routes → GPU host $GPU_HOST_ARG"
+  fi
+  # Validate first, change nothing else until the remote routes are complete.
+  for route in CODER AUTOCOMPLETE MEMORY; do
+    if [[ "$(get_env ${route}_API_BASE)" == *GPU_HOST* ]]; then
+      die "${route}_API_BASE still has the GPU_HOST placeholder. Re-run with --gpu-host <wsl-tailscale-ip>."
+    fi
+  done
   coder_base="$(get_env CODER_API_BASE)"; coder_model="$(get_env CODER_MODEL)"
   is_local "$coder_base" && die "LOCAL_MODEL=false but CODER_API_BASE is '${coder_base:-empty}'. Set CODER_MODEL / CODER_API_BASE / CODER_API_KEY in .env (see .env.example) and re-run."
   [[ -n "$coder_model" ]] || die "LOCAL_MODEL=false: set CODER_MODEL in .env (e.g. openai/coder for a remote llama.cpp)."
-  # Routes still pointing at the (now absent) local server follow `coder`.
+  [[ -n "$(get_env CODER_API_KEY)" ]] || die "Set CODER_API_KEY in .env to the CODER_API_KEY from the GPU host's .env (on WSL: grep CODER_API_KEY ~/ai-stack/.env)."
+  # Routes still pointing at the (absent) local server follow `coder`.
   for route in AUTOCOMPLETE MEMORY; do
     if is_local "$(get_env ${route}_API_BASE)"; then
       set_env ${route}_API_BASE "$coder_base"
-      set_env ${route}_API_KEY  "$(get_env CODER_API_KEY)"
       case "$route" in
         MEMORY)       set_env MEMORY_MODEL "$coder_model" ;;
         AUTOCOMPLETE) set_env AUTOCOMPLETE_MODEL "text-completion-openai/${coder_model#*/}" ;;
@@ -92,21 +140,19 @@ if [[ "$(get_env LOCAL_MODEL)" == false ]]; then
     fi
   done
   set_env COMPOSE_PROFILES ""
-  log "Local model OFF: coder/autocomplete/memory → $coder_base"
-  warn "Hindsight's memory extraction runs remotely: memory content leaves this machine."
+  log "No local model: coder → $coder_base · autocomplete → $(get_env AUTOCOMPLETE_API_BASE)"
 elif [[ "$(get_env COMPOSE_FILE)" == *cpu* ]]; then
   set_env COMPOSE_PROFILES local-model
 fi
 
 # VPS: publish on the Tailscale interface when available, never on 0.0.0.0
-if [[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]] && command -v tailscale >/dev/null; then
-  TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"
-  if [[ -n "$TS_IP" ]]; then
-    set_env LAN_BIND "$TS_IP"; log "LiteLLM will listen on the Tailscale IP $TS_IP"
-  fi
+if [[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]]; then
+  TS_IP="$(tailscale_ip)"
+  [[ -n "$TS_IP" ]] && { set_env LAN_BIND "$TS_IP"; log "LiteLLM will listen on the Tailscale IP $TS_IP"; }
 fi
-[[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]] && \
+if [[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]]; then
   warn "LiteLLM listens on 127.0.0.1 only. Install Tailscale (docs/deploy-vps.md) or use an SSH tunnel."
+fi
 
 gen_if_empty() {
   local key="$1" val="$2"
@@ -129,7 +175,9 @@ if [[ -z "$WORKSPACE_DIR" || "$WORKSPACE_DIR" == *CHANGE_ME* ]]; then
   set_env WORKSPACE_DIR "$WORKSPACE_DIR"
   log "WORKSPACE_DIR set to $WORKSPACE_DIR (edit .env to change)"
 fi
-[[ "$WORKSPACE_DIR" == /mnt/* ]] && warn "WORKSPACE_DIR is on the Windows drive ($WORKSPACE_DIR). Keep code in the WSL filesystem (~/...) — /mnt/c is 5-10x slower for git and file watchers."
+if [[ "$WORKSPACE_DIR" == /mnt/* ]]; then
+  warn "WORKSPACE_DIR is on the Windows drive ($WORKSPACE_DIR). Keep code in the WSL filesystem (~/...) — /mnt/c is 5-10x slower for git and file watchers."
+fi
 mkdir -p "$WORKSPACE_DIR"
 
 # ── Data dirs + Hermes seed config ───────────────────────────────────────────
@@ -217,10 +265,18 @@ $(printf '\033[1;32m✓ ai-stack is up\033[0m')
   VS Code key (LiteLLM):  grep VSCODE_LLM_API_KEY .env
   Hermes API key:         grep HERMES_API_KEY .env
 
-  First start downloads the model(s) (vps ~1.3 GB, poc-wsl ~19 GB, poc-wsl-cpu ~15 GB). Follow it with:
+  First start downloads the model(s) (poc-wsl ~19 GB, poc-wsl-cpu ~15 GB; vps none). Follow it with:
     docker compose logs -f llm-coder
   Then run:  scripts/doctor.sh
 
   Resource budget check:  scripts/doctor.sh  (first section)
   Next: docs/deploy-$PROFILE.md (network access, client setup).
 EOF
+if (( IS_GPU )) && [[ "$(get_env CODER_BIND)" != 127.0.0.1 ]]; then cat <<EOF
+
+  Serving the VPS. On the VPS, put this in ~/ai-stack/.env, then bootstrap:
+    CODER_API_KEY=$(get_env CODER_API_KEY)
+    scripts/bootstrap.sh --profile vps --gpu-host $(get_env CODER_BIND)
+  Windows: allow 8080/8081 from Tailscale → windows\\setup-lan.ps1 -ServeVps
+EOF
+fi

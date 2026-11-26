@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ai-stack — CPU-ONLY compose file (no GPU required)
 #
-#   Used by:  profiles/vps          4 vCPU / 8 GB VPS, everything capped
-#             profiles/poc-wsl-cpu  the WSL PoC box without its GPU
+#   Used by:  profiles/vps          4 vCPU / 8 GB VPS, NO local model (→ WSL GPU)
+#             profiles/poc-wsl-cpu  the WSL PoC box without its GPU (local model)
 #   GPU twin: docker-compose.gpu.yml (same services, GPU models)
 #
 #   VS Code ──► :4000 LiteLLM ──► llm-coder (llama.cpp, CPU)  ← OPTIONAL
@@ -82,7 +82,8 @@ services:
     container_name: ai-llm-coder
     restart: unless-stopped
     env_file:
-      - profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <vps|poc-wsl>}/llm-coder.env
+      - path: profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <vps|poc-wsl|poc-wsl-cpu>}/llm-coder.env
+        required: false      # the vps profile has no local model
     environment:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
@@ -186,9 +187,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${HINDSIGHT_CPUS:-0.75}"
-          memory: ${HINDSIGHT_MEM:-1536m}
-    memswap_limit: ${HINDSIGHT_MEM:-1536m}
+          cpus: "${HINDSIGHT_CPUS:-1.0}"
+          memory: ${HINDSIGHT_MEM:-2048m}
+    memswap_limit: ${HINDSIGHT_MEM:-2048m}
     networks: [ai]
 
   # ── Orchestration ──────────────────────────────────────────────────────────
@@ -226,8 +227,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${HERMES_CPUS:-1.0}"
-          memory: ${HERMES_MEM:-1536m}
+          cpus: "${HERMES_CPUS:-2.0}"
+          memory: ${HERMES_MEM:-3072m}
           pids: 1024           # stops a runaway fork bomb from the agent's shell
-    memswap_limit: ${HERMES_MEM:-1536m}
+    memswap_limit: ${HERMES_MEM:-3072m}
     networks: [ai]

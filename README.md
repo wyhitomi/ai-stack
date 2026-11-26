@@ -4,13 +4,13 @@ A self-hosted AI-assisted development stack, made only of Docker containers, for
 
 | Profile | Machine | Model for `coder` | Purpose |
 |---|---|---|---|
-| **`vps`** | 4 vCPU / 8 GB RAM, no GPU | Qwen2.5-Coder-1.5B on CPU | production. **Everything**, model included, fits in 8 GB |
-| **`poc-wsl`** | WSL2 · 16 CPU / 32 GB · Blackwell 8 GB | Qwen3-Coder-30B-A3B, GPU + RAM | proof of concept, reachable over the LAN |
+| **`vps`** | 4 vCPU / 8 GB RAM, no GPU | **none**: uses the WSL GPU over Tailscale | production. Hermes, Hindsight, LiteLLM and Postgres in 6.4 GB |
+| **`poc-wsl`** | WSL2 · 16 CPU / 32 GB · Blackwell 8 GB | Qwen3-Coder-30B-A3B, GPU + RAM | proof of concept on the LAN, and model server for the VPS (`--serve-vps`) |
 | **`poc-wsl-cpu`** | same WSL box, GPU unused | Qwen3-Coder-30B-A3B (Q3), CPU + RAM | CPU-vs-GPU comparison, or a fallback when the GPU is busy |
 
-There are two standalone Compose files: **`docker-compose.cpu.yml`** (used by `vps` and `poc-wsl-cpu`) and **`docker-compose.gpu.yml`** (used by `poc-wsl`). **In the CPU file the local model is optional:** `scripts/bootstrap.sh --local-model off` routes every model call to a remote GPU host or a hosted provider instead ([how](docs/deploy-vps.md#running-without-a-local-model)). The profile writes the right one into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. To run a file directly: `docker compose -f docker-compose.gpu.yml up -d`. The shared services are kept identical in both files, and `scripts/check-compose.sh` verifies that.
+There are two standalone Compose files: **`docker-compose.cpu.yml`** (used by `vps` and `poc-wsl-cpu`) and **`docker-compose.gpu.yml`** (used by `poc-wsl`). In the CPU file the local model is optional. The VPS never runs it: its routes point at the WSL GPU ([how](docs/deploy-vps.md)). `poc-wsl-cpu` runs it by default, and `--local-model off` turns it off. The profile writes the right one into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. To run a file directly: `docker compose -f docker-compose.gpu.yml up -d`. The shared services are kept identical in both files, and `scripts/check-compose.sh` verifies that.
 
-The PoC runs every non-model service with **the VPS limits**, so a working PoC shows the stack fits the VPS. Only the model differs.
+**Models run only on the WSL machine.** The PoC runs every non-model service with **the VPS limits**, so a working PoC shows the stack fits the VPS.
 
 | Layer | Component | Role |
 |---|---|---|
@@ -51,8 +51,8 @@ flowchart LR
 - **Hermes is also a "model" in LiteLLM** (`hermes-agent`). A LAN client needs one URL and one key, and can pick the raw model for speed or the agent for multi-step work.
 - **Only two ports are ever published:** `4000` (LiteLLM) and `8642` (Hermes, optional). On the PoC they're open to the LAN; on the VPS they're bound to the Tailscale IP or `127.0.0.1`, never the public interface. Postgres, the model servers and Hindsight stay internal.
 - **The workspace is mounted at the same path** inside Hermes, so paths in the agent's output match VS Code.
-- **Hard resource limits on every container.** On the VPS, memory limits add up to 7.4 GB including the model, leaving ~0.8 GB for the OS. On the PoC, the same limits apply to everything except the model. `scripts/doctor.sh` checks this. Details: [docs/resources.md](docs/resources.md).
-- **The model behind `coder` is swappable with one line.** The VPS can route `coder` to a GPU host (like the PoC machine, over Tailscale) and keep the small local model for autocomplete and memory.
+- **Hard resource limits on every container.** On the VPS, memory limits add up to 6.4 GB of a 7.4 GB budget. On the PoC, the same limits apply to every non-model service. `scripts/doctor.sh` checks this. Details: [docs/resources.md](docs/resources.md).
+- **Models are reached by URL.** The VPS's `coder` / `autocomplete` / `memory` routes point at the WSL machine over Tailscale, protected by an API key. The same settings can target any other GPU host or a hosted provider.
 
 ## Requirements
 
@@ -61,16 +61,17 @@ On the host you only need **bash + Docker** (Engine with the compose plugin). Ev
 | | `vps` | `poc-wsl` |
 |---|---|---|
 | OS | Ubuntu 24.04 / Debian 12 | Windows 11 + WSL2 (Ubuntu 24.04) |
-| CPU / RAM | 4 vCPU / 8 GB | 16 CPU / 32 GB (WSL VM: 14 / 26 GB) |
+| CPU / RAM | 4 vCPU / 8 GB | 16 CPU / 32 GB (WSL VM: 14 CPU / 27 GB) |
 | GPU | none | NVIDIA Blackwell 8 GB, Windows driver ≥ R570 + NVIDIA Container Toolkit |
-| Disk | ~15 GB | ~35 GB |
+| Disk | ~10 GB (no models) | ~35 GB |
 | Guide | **[docs/deploy-vps.md](docs/deploy-vps.md)** | **[docs/deploy-poc-wsl.md](docs/deploy-poc-wsl.md)** |
 
 ## Quick start
 
 ```bash
 git clone <this repo> ~/ai-stack && cd ~/ai-stack
-scripts/bootstrap.sh --profile poc-wsl     # or: poc-wsl-cpu, vps  [--local-model off]
+scripts/bootstrap.sh --profile poc-wsl     # WSL GPU   (+ --serve-vps to feed the VPS)
+# scripts/bootstrap.sh --profile vps --gpu-host <wsl-tailscale-ip>   # on the VPS
 docker compose logs -f llm-coder           # first start downloads the model
 scripts/doctor.sh                          # budget + every hop + a real inference
 ```

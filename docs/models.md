@@ -34,23 +34,9 @@ If the GPU is the monitor's GPU, close GPU-heavy apps during long agent runs: Wi
 
 The same Qwen3-Coder-30B-A3B, at **Q3_K_M** (~14.7 GB) so that weights plus the 64k KV cache fit a 19 GB cap. With 10 threads, expect ~8–15 tok/s for generation and noticeably slower prompt processing than with the GPU. It's useful for an apples-to-apples CPU vs. GPU comparison, or to free the GPU for something else. One server answers `coder`, `autocomplete` and `memory`.
 
-## Profile `vps`: 4 vCPU / 8 GB, no GPU
+## Profile `vps`: no local model
 
-| Route | Model | Budget |
-|---|---|---|
-| `coder`, `autocomplete`, `memory` | **Qwen2.5-Coder-1.5B-Instruct** Q6_K, 64k ctx (YaRN ×2) | 3 GB RAM, 3 CPU |
-
-One model serves all three routes. Its memory budget: weights ~1.3 GB, KV 64k @ q8_0 ~1.0 GB, buffers and a 128 MB prompt cache ~0.4 GB. It was picked because it is small enough to hold the 64k window Hermes requires, it has FIM tokens for autocomplete, and it has basic tool calling. Its KV cache is small (only 2 KV heads), which is what makes 64k fit.
-
-Limits you should know about:
-
-- **Tool calling at 1.5B is unreliable.** Hermes works for simple tasks and fails more often on multi-step ones.
-- **Autocomplete shares the single slot.** While Hermes is generating, completions wait.
-
-Options, in order of impact:
-
-1. **Route `coder` to a GPU host.** Use the PoC machine or a GPU VPS, and keep the small model for `autocomplete` and `memory`. See [deploy-vps.md](deploy-vps.md).
-2. Try **IBM Granite 4.0-H-Micro** (3B, Apache-2.0, hybrid Mamba, built for tool calling; 128k context with a very small KV cache) as `coder`. It has no FIM, so keep autocomplete on the Qwen model. That needs a second llama.cpp container, so take its memory from Hindsight or Hermes.
+The VPS runs no model. Its `coder`, `autocomplete` and `memory` routes point at the WSL PoC's `llm-coder` and `llm-autocomplete` over Tailscale, so the VPS gets exactly the models above. Setup: [deploy-vps.md](deploy-vps.md).
 
 ## Llama or Qwen?
 

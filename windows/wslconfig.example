@@ -7,12 +7,12 @@ networkingMode=mirrored
 # Lets Windows apps reach WSL services on localhost (and vice-versa).
 hostAddressLoopback=true
 # Sized for the poc-wsl profile on 16 CPU / 32 GB RAM / 8 GB GPU:
-#   memory     = 4.9 GB (stack, hard-capped by Docker)
+#   memory     = 6.9 GB (stack, hard-capped by Docker — same limits as the VPS)
 #              + ~18 GB  (Qwen3-Coder-30B-A3B experts kept in RAM)
-#              + ~2 GB   (kernel, dockerd, page cache)          ≈ 26 GB
+#              + ~2 GB   (kernel, dockerd, page cache)          ≈ 27 GB
 #   processors = stack caps (≤ 4) + 8 model threads + headroom   = 14
-# Leaves 6 GB RAM and 2 CPUs for Windows.
-memory=26GB
+# Leaves 5 GB RAM and 2 CPUs for Windows: close heavy apps during long runs.
+memory=27GB
 processors=14
 swap=4GB
 
