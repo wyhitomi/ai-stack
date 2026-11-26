@@ -8,8 +8,8 @@
 #          └──► :8642 Hermes ──┘└──► llm-autocomplete (GPU, small FIM model)
 #                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
-# Every service except llm-coder is capped (4 CPU / 7 GB together); the
-# coding model is the one service allowed to use more. Model tuning:
+# Postgres, LiteLLM, Hindsight and Hermes are capped (4 CPU / 7 GB together);
+# the local models are the only services allowed to use more. Model tuning:
 # profiles/<profile>/llm-*.env. LAN-only: the model servers publish NO ports;
 # clients use LiteLLM :4000 / Hermes :8642, which the Windows firewall opens
 # to the home LAN subnet only (windows/setup-lan.ps1).
@@ -124,14 +124,14 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${AUTOCOMPLETE_CPUS:-0.5}"
-          memory: ${AUTOCOMPLETE_MEM:-512m}
+          cpus: "${AUTOCOMPLETE_CPUS:-1.0}"
+          memory: ${AUTOCOMPLETE_MEM:-2g}
         reservations:
           devices:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    memswap_limit: ${AUTOCOMPLETE_MEM:-512m}
+    memswap_limit: ${AUTOCOMPLETE_MEM:-2g}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 15s

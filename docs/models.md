@@ -60,6 +60,33 @@ Running both at once doesn't fit 32 GB of RAM (~18 GB each). Run one at a time, 
 
 Caveat: open-weight releases move fast, and this comparison reflects the models available when this stack was written. Before committing, check current agentic-coding results (e.g. SWE-bench Verified and Aider polyglot) for models that fit **≤ 8 GB VRAM + ~20 GB RAM**. Swapping costs one line in the profile.
 
+## Offline / corporate network
+
+llama.cpp downloads models from Hugging Face the first time a model container starts. On a network that inspects HTTPS or requires a proxy, that download can fail, and `bootstrap.sh` then prints a TLS or download error from the container's log. Two ways around it:
+
+**A) Proxy.** If Docker itself needs a proxy, set it once in `~/.docker/config.json` in WSL. Docker passes it to every container:
+
+```json
+{ "proxies": { "default": { "httpProxy": "http://proxy:8080", "httpsProxy": "http://proxy:8080", "noProxy": "localhost,127.0.0.1,litellm,hermes,hindsight,postgres,llm-coder,llm-autocomplete" } } }
+```
+
+**B) Download the files yourself, and run without any download.**
+
+1. In a browser, open the model repo and download the `.gguf` file with the quantization named in the profile:
+   - autocomplete: `huggingface.co/ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF` (the `Q8_0` file)
+   - coder: `huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF` (the `Q4_K_M` file for gpu, `Q3_K_M` for cpu)
+2. Copy them into the stack. `data/models` is mounted at `/root/.cache` in the model containers:
+   ```bash
+   mkdir -p data/models/gguf
+   cp /mnt/c/Users/<you>/Downloads/*.gguf data/models/gguf/
+   ```
+3. In `profiles/<profile>/llm-*.env`, comment out `LLAMA_ARG_HF_REPO` and point at the file:
+   ```
+   # LLAMA_ARG_HF_REPO=...
+   LLAMA_ARG_MODEL=/root/.cache/gguf/<file-name>.gguf
+   ```
+4. Run `scripts/bootstrap.sh` again.
+
 ## Validating a swap
 
 ```bash

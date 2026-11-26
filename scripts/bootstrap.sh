@@ -48,7 +48,12 @@ if grep -q $'\r' .env.example docker-compose.gpu.yml 2>/dev/null; then
 fi
 command -v docker >/dev/null || die "docker not found. See docs/setup-wsl.md."
 docker compose version >/dev/null 2>&1 || die "docker compose v2 plugin not found."
-docker info >/dev/null 2>&1 || die "Docker daemon not reachable (is it running? are you in the docker group?)."
+if ! docker info >/dev/null 2>&1; then
+  if id -nG "$(id -un)" | grep -qw docker && ! id -Gn | grep -qw docker; then
+    die "You were just added to the docker group, but this shell predates it. Close and reopen the Ubuntu terminal (or run: newgrp docker), then re-run."
+  fi
+  die "Docker daemon not reachable. Is it running? (sudo systemctl status docker) Are you in the docker group? (scripts/install-docker-wsl.sh --check)"
+fi
 
 if [[ "$(grep -E '^COMPOSE_FILE=' "profiles/$PROFILE/stack.env")" == *gpu* ]] && ! docker run --rm --gpus all ubuntu:24.04 nvidia-smi >/dev/null 2>&1; then
   die "Docker can't see the GPU. Install the NVIDIA Container Toolkit (docs/setup-wsl.md), or use --profile cpu."
@@ -144,26 +149,18 @@ if [[ ! -f data/hermes/config.yaml ]]; then
 fi
 [[ -f data/hermes/hindsight/config.json ]] || cp hermes/hindsight.config.json data/hermes/hindsight/config.json
 
-# ── Phase 1: persistence, models, router ─────────────────────────────────────
+# ── Phase 1: persistence + router (no models yet) ────────────────────────────
 log "Pulling images (first run downloads several GB)…"
 docker compose pull --quiet
 docker pull --quiet "$CURL_IMAGE" >/dev/null
 
-# `up` without names starts everything in the profile; hermes/hindsight wait
-# for their keys, so start the first group explicitly.
-MODELS=""
-docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete"
-docker compose config --services | grep -qx llm-coder        && MODELS="$MODELS llm-coder"
-log "Starting postgres, ${MODELS:+local model(s), }litellm…   (profile: $PROFILE, local model: $(get_env LOCAL_MODEL))"
-docker compose up -d postgres $MODELS litellm
-
-log "Waiting for LiteLLM to become healthy…"
-for _ in $(seq 1 90); do
-  [[ "$(docker inspect -f '{{.State.Health.Status}}' ai-litellm 2>/dev/null)" == healthy ]] && break
-  sleep 2
-done
-[[ "$(docker inspect -f '{{.State.Health.Status}}' ai-litellm)" == healthy ]] \
-  || die "LiteLLM did not start. Check: docker compose logs litellm"
+# Models start LAST (phase 4): a model download/start problem must not block
+# Postgres, LiteLLM, Hindsight or Hermes, and it gets its own diagnosis.
+log "Starting postgres + litellm…   (profile: $PROFILE, local model: $(get_env LOCAL_MODEL))"
+docker compose up -d postgres litellm
+wait_healthy ai-postgres 120 postgres || { diagnose ai-postgres; exit 1; }
+wait_healthy ai-litellm  300 litellm  || { diagnose ai-litellm;  exit 1; }
+log "postgres + litellm are healthy"
 
 # ── Phase 2: virtual keys ────────────────────────────────────────────────────
 MASTER="$(get_env LITELLM_MASTER_KEY)"
@@ -206,11 +203,31 @@ if ! docker exec hermes hermes plugins list 2>/dev/null | grep -qi hindsight; th
   docker compose restart hermes
 fi
 
+# ── Phase 4: local models (slow first time: downloads) ───────────────────────
+# autocomplete first: on the GPU, llm-coder's --fit sizes itself around it.
+MODELS=""
+docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete"
+docker compose config --services | grep -qx llm-coder        && MODELS="$MODELS llm-coder"
+MODEL_FAILED=""
+for svc in $MODELS; do
+  c="ai-$svc"
+  timeout=1800; [[ "$svc" == llm-coder ]] && timeout=7200   # ~19 GB on a slow link
+  log "Starting $svc (first start downloads the model; progress below)…"
+  docker compose up -d "$svc"
+  if wait_healthy "$c" "$timeout" "$svc"; then
+    log "$svc is healthy"
+  else
+    diagnose "$c"
+    MODEL_FAILED="$svc"
+    break
+  fi
+done
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<EOF
 
-$(printf '\033[1;32m✓ ai-stack is up\033[0m')
+$( [[ -z "$MODEL_FAILED" ]] && printf '\033[1;32m✓ ai-stack is up\033[0m' || printf '\033[1;33m! ai-stack is up EXCEPT %s (see the diagnosis above)\033[0m' "$MODEL_FAILED")
 
   LiteLLM (OpenAI API)  http://${LAN_IP:-<host-ip>}:$(get_env LITELLM_PORT)/v1
   LiteLLM admin UI      http://localhost:$(get_env LITELLM_PORT)/ui   (user: $(get_env LITELLM_UI_USERNAME), password in .env)
@@ -221,9 +238,10 @@ $(printf '\033[1;32m✓ ai-stack is up\033[0m')
   VS Code key (LiteLLM):  grep VSCODE_LLM_API_KEY .env
   Hermes API key:         grep HERMES_API_KEY .env
 
-  First start downloads the model(s) (gpu ~19 GB, cpu ~15 GB). Follow it with:
-    docker compose logs -f llm-coder
-  Then run:  scripts/doctor.sh
+  Check every hop with:  scripts/doctor.sh
 
   LAN access from other machines: windows\\setup-lan.ps1 on Windows (docs/setup-wsl.md).
 EOF
+
+# Non-zero exit when a model failed, so scripts/CI notice.
+[[ -z "$MODEL_FAILED" ]] || exit 1

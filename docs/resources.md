@@ -2,7 +2,7 @@
 
 Laptop: **16 CPU / 32 GB RAM / Blackwell 8 GB**, WSL VM 14 CPU / 24 GB (`windows/wslconfig.example`).
 
-Every container has a hard **cgroup memory limit** (with `memswap_limit` equal to it, so no container swaps) and a **CPU cap**. Together, all services except the coding model fit an envelope of **4 CPU / 7 GB**. The coding model is the one service allowed to use more. Budgets live in `profiles/<profile>/stack.env`.
+Every container has a hard **cgroup memory limit** (with `memswap_limit` equal to it, so no container swaps) and a **CPU cap**, except `llm-coder` in the gpu profile. Postgres, LiteLLM, Hindsight and Hermes together fit an envelope of **4 CPU / 7 GB**. The local models are the only services allowed to use more. Budgets live in `profiles/<profile>/stack.env`.
 
 | Service | Memory | CPU cap | `gpu` | `cpu` |
 |---|---:|---:|:-:|:-:|
@@ -10,8 +10,8 @@ Every container has a hard **cgroup memory limit** (with `memswap_limit` equal t
 | litellm | 768 MB | 0.50 | ✓ | ✓ |
 | hindsight | 2048 MB | 1.00 | ✓ | ✓ |
 | hermes | 3072 MB | 2.00 | ✓ | ✓ |
-| llm-autocomplete | 512 MB | 0.50 | ✓ (weights on GPU) | — (llm-coder serves it) |
-| **envelope total** | | | **6912 MB** ≤ 7168 | **6400 MB** ≤ 7168 |
+| **envelope total** | | | **6400 MB** ≤ 7168 | **6400 MB** ≤ 7168 |
+| llm-autocomplete | | | 2 GB / 1 CPU cap (weights on GPU) | — (llm-coder serves it) |
 | llm-coder | | | **uncapped**: ~6 GB VRAM + ~17 GB RAM | 19 GB / 10 CPU cap: ~18.5 GB RAM |
 
 Hermes gets the largest share because the agent's shell commands (builds, tests, git) run inside its container.
@@ -33,7 +33,8 @@ docker inspect hermes -f '{{.State.OOMKilled}}'      # was it the limit?
 
 Rebalance in `.env` and keep the total within the envelope:
 
-- **Hermes OOM-killed during `npm install` / big test suites.** The gpu profile has ~250 MB of headroom and the cpu profile ~750 MB. Raise `HERMES_MEM` by that much, or take from Hindsight. Below 1.5 GB, Hindsight's local embedding and reranker models get tight; its docs list 1.5 GB as the minimum. To lift the envelope itself, raise `STACK_MEM_MB`: on a 32 GB laptop the 7 GB envelope is a choice, not a hard limit.
+- **Hermes OOM-killed during `npm install` / big test suites.** Both profiles have ~768 MB of headroom in the envelope. Raise `HERMES_MEM` by up to that much, or take from Hindsight. Below 1.5 GB, Hindsight's local embedding and reranker models get tight; its docs list 1.5 GB as the minimum. To lift the envelope itself, raise `STACK_MEM_MB`: on a 32 GB laptop the 7 GB envelope is a choice, not a hard limit.
+- **A GPU model container dies within seconds of starting.** The CUDA runtime alone needs ~0.5–1 GB of host RAM before the model loads, so a GPU llama.cpp container needs a cap of at least ~1.5 GB. (512 MB was too small and was raised to 2 GB.) `bootstrap.sh` prints the container's OOM status and last log lines when this happens.
 - **The cpu-profile model OOM-killed.** Lower `LLAMA_ARG_CACHE_RAM` or use a `q4_0` V-cache (`profiles/cpu/llm-coder.env`).
 
 ## What the limits don't cover
