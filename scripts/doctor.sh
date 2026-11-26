@@ -14,31 +14,42 @@ chk() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else b
 echo "Containers"
 docker compose ps --format '  {{.Service}}\t{{.State}}\t{{.Health}}'
 
-# ── Budget: everything except llm-coder must fit STACK_CPUS / STACK_MEM_MB ──
-echo "Resource budget (all services except llm-coder)"
+# ── Budget ────────────────────────────────────────────────────────────────────
+# Memory: hard, summed. Every non-exempt container must have a limit, and the
+#         limits must add up to <= STACK_MEM_MB.
+# CPU:    every non-exempt container must have a cap <= STACK_CPUS. Caps may
+#         overlap (CPU time is shared), so their sum is reported, not enforced.
+echo "Resource budget (profile: $(get_env STACK_PROFILE))"
 max_cpu="$(get_env STACK_CPUS)"; max_cpu="${max_cpu:-4}"
 max_mem="$(get_env STACK_MEM_MB)"; max_mem="${max_mem:-7168}"
-read -r cpu_n mem_b unlimited < <(
-  for c in $(docker compose ps -q); do
-    [[ "$(docker inspect -f '{{.Name}}' "$c")" == /ai-llm-coder ]] && continue
-    docker inspect -f '{{.Name}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$c"
-  done | awk '{ if ($2==0 || $3==0) u=u $1 " "; c+=$2; m+=$3 } END { print c+0, m+0, (u==""?"-":u) }'
-)
-cpu_used=$(awk -v n="$cpu_n" 'BEGIN{printf "%.2f", n/1e9}')
+exempt=" $(get_env BUDGET_EXEMPT | tr ',' ' ') "
+rows=$(for c in $(docker compose ps -q); do
+  docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$c"
+done)
+read -r cpu_n mem_b unlimited over < <(echo "$rows" | awk -v ex="$exempt" -v maxc="$max_cpu" '
+  NF==3 && index(ex, " " $1 " ")==0 {
+    if ($2==0 || $3==0) u=u $1 ","
+    if ($2/1e9 > maxc) o=o $1 ","
+    c+=$2; m+=$3 }
+  END { print c+0, m+0, (u==""?"-":u), (o==""?"-":o) }')
+cpu_sum=$(awk -v n="$cpu_n" 'BEGIN{printf "%.2f", n/1e9}')
 mem_used=$(( mem_b / 1024 / 1024 ))
-if [[ "$unlimited" != "-" ]]; then
-  bad "containers without a CPU or memory limit: $unlimited"
-elif awk -v u="$cpu_used" -v m="$max_cpu" 'BEGIN{exit !(u<=m)}' && (( mem_used <= max_mem )); then
-  ok "limits: ${cpu_used}/${max_cpu} CPU, ${mem_used}/${max_mem} MB"
-else
-  bad "limits exceed the envelope: ${cpu_used}/${max_cpu} CPU, ${mem_used}/${max_mem} MB"
+[[ "$exempt" =~ [a-z] ]] && echo "  (not counted, by design:${exempt% })"
+if   [[ "$unlimited" != "-" ]]; then bad "no CPU or memory limit on: ${unlimited%,}"
+elif [[ "$over" != "-" ]];      then bad "CPU cap above ${max_cpu} on: ${over%,}"
+elif (( mem_used > max_mem ));   then bad "memory limits ${mem_used} MB exceed the ${max_mem} MB budget"
+else ok "memory ${mem_used}/${max_mem} MB · CPU caps ≤ ${max_cpu} each (sum of caps ${cpu_sum})"
 fi
 docker stats --no-stream --format '  {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $(docker compose ps -q) 2>/dev/null
 
 echo "Hops"
 chk "postgres accepts connections"        docker exec ai-postgres pg_isready -U postgres
 chk "llm-coder /health"                   docker exec ai-llm-coder curl -fsS http://localhost:8080/health
-chk "llm-autocomplete /health"            docker exec ai-llm-autocomplete curl -fsS http://localhost:8080/health
+if [[ "$(get_env COMPOSE_PROFILES)" == *autocomplete* ]]; then
+  chk "llm-autocomplete /health"          docker exec ai-llm-autocomplete curl -fsS http://localhost:8080/health
+else
+  echo "  · autocomplete served by llm-coder (profile $(get_env STACK_PROFILE))"
+fi
 chk "litellm liveliness"                  dcurl http://litellm:4000/health/liveliness
 chk "litellm lists models (vscode key)"   dcurl http://litellm:4000/v1/models -H "Authorization: Bearer $VK"
 chk "hindsight API"                       dcurl http://hindsight:8888/health
@@ -57,8 +68,12 @@ if DCURL_TIMEOUT=60 dcurl http://litellm:4000/v1/completions -H "Authorization: 
   ok "autocomplete (FIM) via LiteLLM"
 else bad "autocomplete (FIM) via LiteLLM"; fi
 
-echo "GPU"
-docker exec ai-llm-coder nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader 2>/dev/null | sed 's/^/  /' \
-  || echo "  (nvidia-smi not available in container)"
+if [[ "$(get_env COMPOSE_FILE)" == *gpu* ]]; then
+  echo "GPU"
+  docker exec ai-llm-coder nvidia-smi --query-gpu=name,compute_cap,memory.used,memory.total --format=csv,noheader 2>/dev/null | sed 's/^/  /' \
+    || bad "nvidia-smi not available in llm-coder"
+  docker logs ai-llm-coder 2>&1 | grep -qi "no kernel image" && bad "CUDA image lacks kernels for this GPU: set LLAMACPP_GPU_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda13"
+  docker logs ai-llm-coder 2>&1 | grep -iE "offloaded|fit|CUDA0 model buffer|CPU_Mapped model buffer" | tail -4 | sed 's/^/  /'
+fi
 
 exit $fail

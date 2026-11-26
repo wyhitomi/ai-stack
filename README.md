@@ -1,13 +1,20 @@
 # ai-stack
 
-A self-hosted AI-assisted development stack. Every component runs as a Docker container inside WSL2, and VS Code on any machine on your LAN can reach it. All services except the local model share a hard **4 CPU / 7 GB RAM** budget.
+A self-hosted AI-assisted development stack, made only of Docker containers, for VS Code. It targets two machines with the same compose files and different profiles:
+
+| Profile | Machine | Model for `coder` | Purpose |
+|---|---|---|---|
+| **`vps`** | 4 vCPU / 8 GB RAM, no GPU | Qwen2.5-Coder-1.5B on CPU | production. **Everything**, model included, fits in 8 GB |
+| **`poc-wsl`** | WSL2 · 16 CPU / 32 GB · Blackwell 8 GB | Qwen3-Coder-30B-A3B, GPU + RAM | proof of concept, reachable over the LAN |
+
+The PoC runs every non-model service with **the VPS limits**, so a working PoC shows the stack fits the VPS. Only the model differs.
 
 | Layer | Component | Role |
 |---|---|---|
 | Orchestration and memory | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** (Nous Research) | Agent loop, tools (files, terminal, web), skills that improve with use, session history, ACP for editors |
 | Long-term memory | **[Hindsight](https://github.com/vectorize-io/hindsight)** (Hermes memory provider) | Fact and entity extraction, semantic recall and reflection, stored in Postgres + pgvector |
 | Routing and management | **[LiteLLM](https://github.com/BerriAI/litellm) proxy** | One OpenAI-compatible endpoint, model aliases, per-user virtual keys, rate limits, usage logs, optional cloud fallback |
-| Local models | **llama.cpp server** (CUDA) | `coder`: Qwen3-Coder-30B-A3B (agent + chat). `autocomplete`: Qwen2.5-Coder-1.5B (FIM) |
+| Local models | **llama.cpp server** (CPU or CUDA) | `coder` / `autocomplete` / `memory` routes. Model choice per profile: [docs/models.md](docs/models.md) |
 | Persistence | **PostgreSQL 17 + pgvector** | LiteLLM (keys, spend, logs) and Hindsight (memories, embeddings) |
 
 ```mermaid
@@ -16,12 +23,12 @@ flowchart LR
     VS["VS Code + Continue"]
     ACP["VS Code + ACP Client<br/>(on the WSL host)"]
   end
-  subgraph WSL["WSL2 · Docker · network ai-stack"]
+  subgraph WSL["Docker · network ai-stack (VPS or WSL2)"]
     LL["LiteLLM :4000"]
     HM["Hermes Agent :8642"]
     HS["Hindsight :8888"]
     C["llm-coder<br/>llama.cpp"]
-    A["llm-autocomplete<br/>llama.cpp"]
+    A["llm-autocomplete<br/>(poc-wsl only)"]
     PG[("Postgres + pgvector")]
   end
   VS -- "coder / autocomplete / hermes-agent" --> LL
@@ -39,39 +46,45 @@ flowchart LR
 
 - **Everything that calls a model goes through LiteLLM.** That covers Hermes, Hindsight and the editors. You get one place to swap models, add a cloud fallback, set limits, and see who used what.
 - **Hermes is also a "model" in LiteLLM** (`hermes-agent`). A LAN client needs one URL and one key, and can pick the raw model for speed or the agent for multi-step work.
-- **Only two ports reach the LAN:** `4000` (LiteLLM) and `8642` (Hermes, optional). Postgres, the model servers and Hindsight stay internal or on `127.0.0.1`.
+- **Only two ports are ever published:** `4000` (LiteLLM) and `8642` (Hermes, optional). On the PoC they're open to the LAN; on the VPS they're bound to the Tailscale IP or `127.0.0.1`, never the public interface. Postgres, the model servers and Hindsight stay internal.
 - **The workspace is mounted at the same path** inside Hermes, so paths in the agent's output match VS Code.
-- **Hard resource envelope.** Every service except `llm-coder` has a cgroup CPU and memory limit, and together they add up to 4 CPU / 7 GB. The local model is the only service allowed to use more. Details and tuning: [docs/resources.md](docs/resources.md).
+- **Hard resource limits on every container.** On the VPS, memory limits add up to 7.4 GB including the model, leaving ~0.8 GB for the OS. On the PoC, the same limits apply to everything except the model. `scripts/doctor.sh` checks this. Details: [docs/resources.md](docs/resources.md).
+- **The model behind `coder` is swappable with one line.** The VPS can route `coder` to a GPU host (like the PoC machine, over Tailscale) and keep the small local model for autocomplete and memory.
 
 ## Requirements
 
-- Windows 11 + WSL2 (Ubuntu 24.04), Docker Engine in WSL **or** Docker Desktop. On the host you only need **bash + Docker**: everything else, including the HTTP calls the scripts make, runs in containers.
-- NVIDIA GPU; **24 GB VRAM** for the defaults (other sizes: [docs/models.md](docs/models.md))
-- CPU/RAM: **4 CPU / 7 GB** for the stack, plus what the model needs. With full GPU offload, a WSL VM of 8 CPU / 12 GB is enough (`windows/wslconfig.example`).
-- ~40 GB disk for images and models
+On the host you only need **bash + Docker** (Engine with the compose plugin). Everything else, including the HTTP calls the scripts make, runs in containers.
 
-Setting up Docker, GPU and LAN on WSL: **[docs/wsl-lan.md](docs/wsl-lan.md)**
+| | `vps` | `poc-wsl` |
+|---|---|---|
+| OS | Ubuntu 24.04 / Debian 12 | Windows 11 + WSL2 (Ubuntu 24.04) |
+| CPU / RAM | 4 vCPU / 8 GB | 16 CPU / 32 GB (WSL VM: 14 / 26 GB) |
+| GPU | none | NVIDIA Blackwell 8 GB, Windows driver ≥ R570 + NVIDIA Container Toolkit |
+| Disk | ~15 GB | ~35 GB |
+| Guide | **[docs/deploy-vps.md](docs/deploy-vps.md)** | **[docs/deploy-poc-wsl.md](docs/deploy-poc-wsl.md)** |
 
 ## Quick start
 
 ```bash
 git clone <this repo> ~/ai-stack && cd ~/ai-stack
-scripts/bootstrap.sh          # secrets, config, start-up, virtual keys, memory plugin
-docker compose logs -f llm-coder   # first start downloads ~20 GB of models
-scripts/doctor.sh             # checks every hop, including a real inference
+scripts/bootstrap.sh --profile poc-wsl     # or: --profile vps
+docker compose logs -f llm-coder           # first start downloads the model
+scripts/doctor.sh                          # budget + every hop + a real inference
 ```
+
+`bootstrap.sh` generates secrets, applies the profile, starts the services in order, creates the LiteLLM virtual keys and installs Hermes' memory plugin. It's safe to re-run.
 
 Then:
 
-1. **LAN**: run `windows\setup-lan.ps1` as Administrator, then `wsl --shutdown` ([docs/wsl-lan.md](docs/wsl-lan.md#4-make-it-reachable-from-the-lan)).
-2. **VS Code**: copy `vscode/continue-config.yaml` to `~/.continue/config.yaml` and fill in host and key ([docs/vscode.md](docs/vscode.md)).
+1. **Network.** PoC: run `windows\setup-lan.ps1` as Administrator, then `wsl --shutdown` ([guide](docs/deploy-poc-wsl.md#4-make-it-reachable-from-the-lan)). VPS: Tailscale or an SSH tunnel ([guide](docs/deploy-vps.md#network-never-on-the-public-interface)).
+2. **VS Code.** Copy `vscode/continue-config.yaml` to `~/.continue/config.yaml` and fill in the host and key ([docs/vscode.md](docs/vscode.md)).
 3. **Hermes CLI** (optional): `docker exec -it hermes hermes` opens the full terminal UI.
 
 ## Endpoints
 
 | URL | Who | Auth |
 |---|---|---|
-| `http://<host>:4000/v1` | LAN clients (OpenAI API) | LiteLLM virtual key |
+| `http://<host>:4000/v1` | VS Code / any OpenAI client | LiteLLM virtual key |
 | `http://localhost:4000/ui` | you (admin UI: keys, usage, logs) | `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` |
 | `http://<host>:8642/v1` | direct Hermes API (model `hermes-agent`) | `HERMES_API_KEY` |
 | `http://localhost:9999` | Hindsight UI (browse and fix memories) | — (local only) |
@@ -96,7 +109,9 @@ scripts/new-key.sh laptop-ana          # key for another machine/person
 docker compose pull && docker compose up -d   # upgrade (pin digests in .env once stable)
 ```
 
-**Swap the model:** edit `CODER_MODEL` / `CODER_CTX` in `.env`, then `docker compose up -d llm-coder`. If you change the context, update `max_input_tokens` in `litellm/config.yaml` and `model.context_length` in `data/hermes/config.yaml`.
+**Swap the model:** edit `profiles/<profile>/llm-coder.env`, then `docker compose up -d llm-coder` ([docs/models.md](docs/models.md)).
+
+**Switch profile:** `scripts/bootstrap.sh --profile <name>`. It re-applies the budgets and overrides and keeps your secrets and keys.
 
 **Cloud fallback:** uncomment `cloud-coder` and `fallbacks` in `litellm/config.yaml`, set the key in `.env`, then `docker compose up -d litellm`.
 
@@ -112,22 +127,25 @@ docker exec hermes hermes backup        # Hermes' own snapshot (never copy state
 - **Hermes runs shell commands** inside its container, with your workspace mounted read-write. Anyone holding `HERMES_API_KEY`, or a LiteLLM key allowed to use `hermes-agent`, can act on that code. Treat those keys like SSH access to the repo.
 - For a tighter setup, set `HERMES_BIND=127.0.0.1` in `.env`. LAN clients still reach Hermes through LiteLLM, with per-user keys that you can revoke.
 - `LITELLM_MASTER_KEY` is the admin key. It stays on the server. Give clients virtual keys only.
-- The firewall rules are limited to the **Private** profile and the **local subnet**. Never port-forward 4000 or 8642 on your router. For remote access, use Tailscale or WireGuard.
+- PoC: the firewall rules are limited to the **Private** network profile and the **local subnet**. Never port-forward 4000 or 8642 on your router.
+- VPS: nothing listens on the public interface. Docker bypasses ufw, so the bind address (`LAN_BIND`) is the real protection. Use Tailscale or an SSH tunnel.
 - `LITELLM_SALT_KEY` encrypts credentials stored in the DB. Changing it after the first run makes them unreadable.
 
 ## Layout
 
 ```
-docker-compose.yml        all services
-compose.cpu.yml           CPU-only override
-.env.example              every setting (bootstrap.sh → .env)
+docker-compose.yml        all services (CPU base, limits on everything)
+compose.gpu.yml           poc-wsl: NVIDIA/CUDA override (Blackwell-ready image)
+compose.vps.yml           vps: caps the model too
+profiles/<name>/          stack.env (budget, binds, overrides) + llm-*.env (model tuning)
+.env.example              shared settings + secrets (bootstrap.sh → .env)
 litellm/config.yaml       model routes, fallbacks, logging
 postgres/init/            first-boot DB/role/extension setup
 hermes/                   Hermes config template + Hindsight plugin config
 scripts/                  bootstrap, doctor (health + budget check), new-key
-windows/                  .wslconfig + LAN firewall script (PowerShell)
+windows/                  PoC: .wslconfig + LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
-docs/                     WSL/LAN, models, resources, VS Code guides
+docs/                     deploy-vps, deploy-poc-wsl, models, resources, vscode
 LICENSE                   BSD 3-Clause
 data/                     runtime state (git-ignored)
 ```

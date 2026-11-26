@@ -6,15 +6,15 @@
 networkingMode=mirrored
 # Lets Windows apps reach WSL services on localhost (and vice-versa).
 hostAddressLoopback=true
-# Size the VM = stack envelope + local model + OS overhead:
-#   memory     = 7 GB (stack, hard-capped by Docker) + model host RAM + ~1.5 GB
-#                model host RAM ≈ 2-3 GB with full GPU offload; add the size of
-#                the offloaded experts if you use --n-cpu-moe (docs/models.md)
-#   processors = 4 (stack, hard-capped by Docker) + threads for the model
-# The values below fit the default 24 GB-VRAM setup. Leave >= 6 GB for Windows.
-memory=12GB
-processors=8
-swap=8GB
+# Sized for the poc-wsl profile on 16 CPU / 32 GB RAM / 8 GB GPU:
+#   memory     = 4.9 GB (stack, hard-capped by Docker)
+#              + ~18 GB  (Qwen3-Coder-30B-A3B experts kept in RAM)
+#              + ~2 GB   (kernel, dockerd, page cache)          ≈ 26 GB
+#   processors = stack caps (≤ 4) + 8 model threads + headroom   = 14
+# Leaves 6 GB RAM and 2 CPUs for Windows.
+memory=26GB
+processors=14
+swap=4GB
 
 [experimental]
 # Return freed memory to Windows gradually.

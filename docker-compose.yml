@@ -1,37 +1,28 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ai-stack — local AI-assisted development, 100% Docker containers
 #
-#   VS Code / LAN clients
+#   VS Code clients
 #        │
 #        ├──► :8642  Hermes Agent API  (agent: tools, skills, memory)
 #        │             │
 #        └──► :4000  LiteLLM proxy  ◄──┘   (routing, keys, budgets, logs)
 #                      │
-#          ┌───────────┼──────────────┐
-#          ▼           ▼              ▼
-#      llm-coder  llm-autocomplete  (optional cloud fallback)
-#      (llama.cpp) (llama.cpp)
+#              ┌───────┴────────┐
+#              ▼                ▼
+#          llm-coder     llm-autocomplete (poc-wsl only)
+#          (llama.cpp)     (llama.cpp)
 #
 #   Hermes ──► Hindsight (long-term memory) ──► Postgres + pgvector
 #   LiteLLM ─────────────────────────────────► Postgres (keys, spend, logs)
 #
-# RESOURCE BUDGET (hard limits, enforced by Docker cgroups)
-#   Every service except `llm-coder` shares a fixed envelope of 4 CPU / 7 GB RAM:
+# This base file is target-neutral and CPU-only. The deployment profile picks
+# the overrides through COMPOSE_FILE / COMPOSE_PROFILES in .env:
 #
-#     service            cpus   memory
-#     postgres           0.50    768m
-#     litellm            0.50   1024m
-#     hindsight          1.00   2048m
-#     hermes             1.50   2560m
-#     llm-autocomplete   0.50    768m
-#     ─────────────────────────────────
-#     total              4.00   7168m  (= 7 GB)
+#   profiles/vps      4 vCPU / 8 GB, no GPU     → + compose.vps.yml
+#   profiles/poc-wsl  WSL2, Blackwell 8 GB GPU  → + compose.gpu.yml
 #
-#   `llm-coder` (the local model) is the only unbounded service.
-#   Change the split in .env (*_CPUS / *_MEM); scripts/doctor.sh verifies that
-#   the sum still fits STACK_CPUS / STACK_MEM_MB.
-#
-# Only LiteLLM and the Hermes API are published on the LAN.
+# Model tuning lives in profiles/<profile>/llm-*.env (LLAMA_ARG_* variables).
+# Every service has hard CPU/memory limits; budgets are in profiles/*/stack.env.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ai-stack
@@ -46,27 +37,27 @@ services:
     image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
     container_name: ai-postgres
     restart: unless-stopped
-    # Tuned for a 768 MB container (defaults assume a whole machine)
+    # Tuned for a 512 MB container (Postgres defaults assume a whole machine)
     command:
       - postgres
       - -c
-      - shared_buffers=192MB
+      - shared_buffers=128MB
       - -c
-      - effective_cache_size=512MB
+      - effective_cache_size=256MB
       - -c
       - work_mem=4MB
       - -c
-      - maintenance_work_mem=64MB
+      - maintenance_work_mem=48MB
       - -c
-      - max_connections=60
+      - max_connections=40
       - -c
-      - max_worker_processes=4
+      - max_worker_processes=2
       - -c
       - max_parallel_workers_per_gather=0
       - -c
       - max_parallel_maintenance_workers=1
       - -c
-      - wal_buffers=8MB
+      - wal_buffers=4MB
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/bootstrap.sh}
@@ -75,15 +66,15 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
-    shm_size: 128m
+    shm_size: 64m
     ports:
-      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never LAN.
+      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never exposed.
     deploy:
       resources:
         limits:
           cpus: "${PG_CPUS:-0.5}"
-          memory: ${PG_MEM:-768m}
-    memswap_limit: ${PG_MEM:-768m}
+          memory: ${PG_MEM:-512m}
+    memswap_limit: ${PG_MEM:-512m}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -91,88 +82,48 @@ services:
       retries: 20
     networks: [ai]
 
-  # ── Local models ───────────────────────────────────────────────────────────
-  # The main model: the ONLY service outside the 4 CPU / 7 GB envelope.
+  # ── Local models (all tuning via profiles/<profile>/llm-*.env) ─────────────
   llm-coder:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: ai-llm-coder
     restart: unless-stopped
+    env_file:
+      - profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <vps|poc-wsl>}/llm-coder.env
     environment:
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
-    command:
-      - -hf
-      - ${CODER_MODEL}
-      - --alias
-      - coder
-      - --ctx-size
-      - "${CODER_CTX:-65536}"
-      - --parallel
-      - "${CODER_PARALLEL:-1}"
-      - --n-gpu-layers
-      - "999"
-      - --cache-type-k
-      - ${CODER_KV_TYPE:-q8_0}
-      - --cache-type-v
-      - ${CODER_KV_TYPE:-q8_0}
-      - --jinja              # use the model's chat template → native tool calling
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8080"
     volumes:
       - ./data/models:/root/.cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
+      # /health is exempt from LLAMA_API_KEY, so this keeps working with a key set
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 120          # first boot downloads ~18 GB
+      retries: 120          # first boot downloads the model
       start_period: 60s
     networks: [ai]
+    # Limits: vps → compose.vps.yml (3 GB cap). poc-wsl → uncapped by design.
 
-  # Small FIM model. Weights live in VRAM; it stays inside the shared envelope.
   llm-autocomplete:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    profiles: [autocomplete]     # enabled by COMPOSE_PROFILES (poc-wsl only)
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: ai-llm-autocomplete
     restart: unless-stopped
+    env_file:
+      - profiles/${STACK_PROFILE}/llm-autocomplete.env
     environment:
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
-    command:
-      - -hf
-      - ${AUTOCOMPLETE_MODEL}
-      - --alias
-      - autocomplete
-      - --ctx-size
-      - "${AUTOCOMPLETE_CTX:-8192}"
-      - --n-gpu-layers
-      - "999"
-      - --threads
-      - "1"
-      - --threads-http
-      - "2"
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8080"
     volumes:
       - ./data/models:/root/.cache
     deploy:
       resources:
         limits:
           cpus: "${AUTOCOMPLETE_CPUS:-0.5}"
-          memory: ${AUTOCOMPLETE_MEM:-768m}
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    memswap_limit: ${AUTOCOMPLETE_MEM:-768m}
+          memory: ${AUTOCOMPLETE_MEM:-512m}
+    memswap_limit: ${AUTOCOMPLETE_MEM:-512m}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -189,7 +140,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # One worker: a single dev team doesn't need more, and each worker is ~300 MB
+    # One worker: a small team doesn't need more, and each worker is ~300 MB
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     environment:
       DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm
@@ -198,19 +149,22 @@ services:
       UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD}
       STORE_MODEL_IN_DB: "False"     # config.yaml in git is the source of truth
+      CODER_API_BASE: ${CODER_API_BASE:-http://llm-coder:8080/v1}
+      CODER_API_KEY: ${CODER_API_KEY:-none}
+      AUTOCOMPLETE_API_BASE: ${AUTOCOMPLETE_API_BASE:-http://llm-coder:8080/v1}
       HERMES_API_KEY: ${HERMES_API_KEY}     # for the hermes-agent route
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     ports:
-      - "${LAN_BIND:-0.0.0.0}:${LITELLM_PORT:-4000}:4000"
+      - "${LAN_BIND:-127.0.0.1}:${LITELLM_PORT:-4000}:4000"
     deploy:
       resources:
         limits:
           cpus: "${LITELLM_CPUS:-0.5}"
-          memory: ${LITELLM_MEM:-1024m}
-    memswap_limit: ${LITELLM_MEM:-1024m}
+          memory: ${LITELLM_MEM:-768m}
+    memswap_limit: ${LITELLM_MEM:-768m}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
       interval: 10s
@@ -238,12 +192,12 @@ services:
       HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:-pending}
       HINDSIGHT_API_LLM_MODEL: memory
       # Embeddings + reranker run in-container on CPU (~1.0-1.5 GB RSS).
-      # Keep them to one thread each so they live inside 1 CPU.
+      # One thread each so they stay inside their CPU cap.
       HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "true"
       HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "true"
       HINDSIGHT_API_EMBEDDINGS_LOCAL_MAX_CONCURRENT: "1"
       HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT: "1"
-      HINDSIGHT_API_DB_POOL_MAX_SIZE: "8"
+      HINDSIGHT_API_DB_POOL_MAX_SIZE: "6"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       TOKENIZERS_PARALLELISM: "false"
@@ -252,9 +206,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${HINDSIGHT_CPUS:-1.0}"
-          memory: ${HINDSIGHT_MEM:-2048m}
-    memswap_limit: ${HINDSIGHT_MEM:-2048m}
+          cpus: "${HINDSIGHT_CPUS:-0.75}"
+          memory: ${HINDSIGHT_MEM:-1536m}
+    memswap_limit: ${HINDSIGHT_MEM:-1536m}
     networks: [ai]
 
   # ── Orchestration ──────────────────────────────────────────────────────────
@@ -271,7 +225,7 @@ services:
     environment:
       HERMES_UID: ${HERMES_UID:-1000}
       HERMES_GID: ${HERMES_GID:-1000}
-      # OpenAI-compatible API server (what VS Code / LAN clients talk to)
+      # OpenAI-compatible API server (what VS Code clients talk to)
       API_SERVER_ENABLED: "true"
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: "8642"
@@ -285,16 +239,15 @@ services:
       # Same absolute path inside and outside → paths line up with VS Code
       - ${WORKSPACE_DIR}:${WORKSPACE_DIR}
     ports:
-      # Direct Hermes API. LAN clients can use LiteLLM's `hermes-agent` model
-      # instead; set HERMES_BIND=127.0.0.1 in .env to keep this port local.
-      - "${HERMES_BIND:-0.0.0.0}:${HERMES_API_PORT:-8642}:8642"
-    # Hermes runs the agent's shell commands (builds, tests, git) in here, so
-    # it gets the largest share of the envelope.
+      # Direct Hermes API. Clients can use LiteLLM's `hermes-agent` model
+      # instead; set HERMES_BIND=127.0.0.1 to keep this port local.
+      - "${HERMES_BIND:-127.0.0.1}:${HERMES_API_PORT:-8642}:8642"
+    # Hermes runs the agent's shell commands (builds, tests, git) in here.
     deploy:
       resources:
         limits:
-          cpus: "${HERMES_CPUS:-1.5}"
-          memory: ${HERMES_MEM:-2560m}
+          cpus: "${HERMES_CPUS:-1.0}"
+          memory: ${HERMES_MEM:-1536m}
           pids: 1024           # stops a runaway fork bomb from the agent's shell
-    memswap_limit: ${HERMES_MEM:-2560m}
+    memswap_limit: ${HERMES_MEM:-1536m}
     networks: [ai]

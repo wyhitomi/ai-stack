@@ -1,12 +1,32 @@
-# WSL2 setup and LAN access
+# Deploying the PoC on WSL2 (profile `poc-wsl`)
+
+Target machine: **16 CPU / 32 GB RAM / NVIDIA Blackwell GPU with 8 GB** (RTX 50xx class), Windows 11 + WSL2.
+
+The PoC runs every non-model service with **exactly the VPS limits**, so a passing PoC shows the stack fits the 4 vCPU / 8 GB VPS. Only the coding model differs. Here it uses the GPU and the spare RAM to run Qwen3-Coder-30B-A3B, where the VPS has to settle for a 1.5B model (see [models.md](models.md)).
+
+```bash
+scripts/bootstrap.sh --profile poc-wsl
+scripts/doctor.sh
+```
 
 ## 1. Windows prerequisites
 
 - Windows 11 22H2+ (for mirrored networking), WSL 2.0+: run `wsl --update`, then `wsl --version`
-- **NVIDIA driver for Windows**, recent Game Ready or Studio. Do **not** install a Linux NVIDIA driver inside WSL: the Windows driver exposes the GPU to WSL.
+- **NVIDIA driver for Windows, R570 or newer.** Blackwell needs CUDA 12.8+, and older drivers can't run the CUDA 12.8 llama.cpp image. Do **not** install a Linux NVIDIA driver inside WSL: the Windows driver exposes the GPU to WSL.
 - An Ubuntu 24.04 distro: `wsl --install -d Ubuntu-24.04`
 
-Check inside WSL: `nvidia-smi` should list your GPU.
+Check inside WSL: `nvidia-smi` should list your GPU and a CUDA version ≥ 12.8.
+
+### Size the WSL VM
+
+Copy `windows/wslconfig.example` to `%UserProfile%\.wslconfig` (`setup-lan.ps1` does this), then `wsl --shutdown`. Its defaults for this machine:
+
+| | WSL VM | Left for Windows | Why |
+|---|---|---|---|
+| memory | 26 GB | 6 GB | stack 4.9 GB (capped) + model ~18 GB (MoE experts in RAM) + ~2 GB kernel/dockerd |
+| processors | 14 | 2 | stack caps ≤ 4 + 8 model threads + headroom |
+
+If Windows feels starved, switch the model to a smaller quant (docs/models.md) and lower `memory`.
 
 ## 2. Docker inside WSL
 
@@ -31,7 +51,7 @@ sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart doc
 #   [boot]
 #   systemd=true
 
-docker run --rm --gpus all ubuntu:24.04 nvidia-smi   # must show your GPU
+docker run --rm --gpus all ubuntu:24.04 nvidia-smi   # must show your GPU, CUDA >= 12.8
 ```
 
 **B) Docker Desktop** with the WSL2 backend and WSL integration on for your distro. GPU support is built in. Docker Desktop publishes ports on **Windows** directly, so in step 4 you only need the regular Windows firewall rule. The Hyper-V/mirrored steps don't apply.

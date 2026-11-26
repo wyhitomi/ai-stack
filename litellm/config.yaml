@@ -9,13 +9,13 @@ model_list:
   - model_name: coder
     litellm_params:
       model: openai/coder                 # "openai/" = generic OpenAI-compatible backend
-      api_base: http://llm-coder:8080/v1
-      api_key: "none"                     # llama.cpp does not check it
+      api_base: os.environ/CODER_API_BASE # local llm-coder, or a remote GPU host (profile)
+      api_key: os.environ/CODER_API_KEY   # "none" locally; the GPU host's LLAMA_API_KEY if remote
       timeout: 600
       stream_timeout: 600
     model_info:
       mode: chat
-      max_input_tokens: 65536             # keep in sync with CODER_CTX
+      max_input_tokens: 65536             # keep in sync with CODER_CTX / LLAMA_ARG_CTX_SIZE
       supports_function_calling: true
       input_cost_per_token: 0
       output_cost_per_token: 0
@@ -24,7 +24,7 @@ model_list:
   - model_name: autocomplete
     litellm_params:
       model: text-completion-openai/autocomplete
-      api_base: http://llm-autocomplete:8080/v1
+      api_base: os.environ/AUTOCOMPLETE_API_BASE  # poc: own GPU model · vps: shares llm-coder
       api_key: "none"
       timeout: 30
     model_info:
@@ -32,12 +32,11 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # Alias used by Hindsight for memory extraction/reflection. Points to the same
-  # local coder model today; repoint it to a smaller/faster model later if the
-  # GPU is contended.
+  # Alias used by Hindsight for memory extraction/reflection. Always the LOCAL
+  # model (memory content never leaves the box, even if `coder` is remote).
   - model_name: memory
     litellm_params:
-      model: openai/coder
+      model: openai/memory
       api_base: http://llm-coder:8080/v1
       api_key: "none"
       timeout: 600

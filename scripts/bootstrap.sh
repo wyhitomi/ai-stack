@@ -3,7 +3,11 @@
 # One-shot setup for ai-stack. Safe to re-run: it never overwrites existing
 # secrets, keys or Hermes config. Needs only bash + docker on the host.
 #
-#   1. creates .env from .env.example and generates every secret
+#   scripts/bootstrap.sh --profile poc-wsl   # WSL2 + NVIDIA GPU (PoC)
+#   scripts/bootstrap.sh --profile vps       # 4 vCPU / 8 GB, CPU only
+#   scripts/bootstrap.sh                     # re-run with the profile in .env
+#
+#   1. creates .env from .env.example + the profile, generates every secret
 #   2. seeds data/hermes (config.yaml + Hindsight plugin config)
 #   3. starts Postgres, the local models and LiteLLM
 #   4. creates LiteLLM virtual keys for Hermes, Hindsight and VS Code
@@ -12,18 +16,51 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# ── Arguments ────────────────────────────────────────────────────────────────
+PROFILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) PROFILE="${2:?--profile needs a value}"; shift 2 ;;
+    --profile=*) PROFILE="${1#*=}"; shift ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+[[ -z "$PROFILE" ]] && PROFILE="$(get_env STACK_PROFILE)"
+[[ -n "$PROFILE" ]] || die "Choose a profile: scripts/bootstrap.sh --profile <$(ls profiles | paste -sd'|')>"
+[[ -f "profiles/$PROFILE/stack.env" ]] || die "Unknown profile '$PROFILE'. Available: $(ls profiles | paste -sd' ')"
+
 # ── Pre-flight ───────────────────────────────────────────────────────────────
-command -v docker >/dev/null || die "docker not found. See docs/wsl-lan.md → 'Docker inside WSL'."
+command -v docker >/dev/null || die "docker not found. See docs/deploy-vps.md or docs/deploy-poc-wsl.md."
 docker compose version >/dev/null 2>&1 || die "docker compose v2 plugin not found."
 docker info >/dev/null 2>&1 || die "Docker daemon not reachable (is it running? are you in the docker group?)."
 
-if ! docker run --rm --gpus all ubuntu:24.04 true >/dev/null 2>&1; then
-  warn "Docker can't see a GPU. The llama.cpp services will fail to start."
-  warn "Install the NVIDIA Container Toolkit (docs/wsl-lan.md) or use compose.cpu.yml (docs/models.md)."
+if [[ "$PROFILE" == poc-wsl ]] && ! docker run --rm --gpus all ubuntu:24.04 nvidia-smi >/dev/null 2>&1; then
+  die "Docker can't see the GPU. Install the NVIDIA Container Toolkit (docs/deploy-poc-wsl.md)."
 fi
 
-# ── .env + secrets ───────────────────────────────────────────────────────────
+# ── .env + profile + secrets ─────────────────────────────────────────────────
 [[ -f .env ]] || { cp .env.example .env; log "Created .env from .env.example"; }
+
+# Apply the profile: every KEY=VALUE in stack.env overwrites .env. Switching
+# profiles later re-applies the new one (secrets and keys are untouched).
+if [[ "$(get_env STACK_PROFILE)" != "$PROFILE" ]]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Z_]+= ]] || continue
+    set_env "${line%%=*}" "${line#*=}"
+  done < "profiles/$PROFILE/stack.env"
+  log "Applied profile '$PROFILE'"
+fi
+
+# VPS: publish on the Tailscale interface when available, never on 0.0.0.0
+if [[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]] && command -v tailscale >/dev/null; then
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"
+  if [[ -n "$TS_IP" ]]; then
+    set_env LAN_BIND "$TS_IP"; log "LiteLLM will listen on the Tailscale IP $TS_IP"
+  fi
+fi
+[[ "$PROFILE" == vps && "$(get_env LAN_BIND)" == 127.0.0.1 ]] && \
+  warn "LiteLLM listens on 127.0.0.1 only. Install Tailscale (docs/deploy-vps.md) or use an SSH tunnel."
 
 gen_if_empty() {
   local key="$1" val="$2"
@@ -62,8 +99,11 @@ log "Pulling images (first run downloads several GB)…"
 docker compose pull --quiet
 docker pull --quiet "$CURL_IMAGE" >/dev/null
 
-log "Starting postgres, llm-coder, llm-autocomplete, litellm…"
-docker compose up -d postgres llm-coder llm-autocomplete litellm
+log "Starting postgres, local model(s), litellm…   (profile: $PROFILE)"
+# `up` without names starts everything in the profile; hermes/hindsight wait
+# for their keys, so start the first group explicitly.
+MODELS="llm-coder"; [[ "$(get_env COMPOSE_PROFILES)" == *autocomplete* ]] && MODELS="llm-autocomplete llm-coder"
+docker compose up -d postgres $MODELS litellm
 
 log "Waiting for LiteLLM to become healthy…"
 for _ in $(seq 1 90); do
@@ -129,10 +169,10 @@ $(printf '\033[1;32m✓ ai-stack is up\033[0m')
   VS Code key (LiteLLM):  grep VSCODE_LLM_API_KEY .env
   Hermes API key:         grep HERMES_API_KEY .env
 
-  First start downloads the models (~20 GB). Follow it with:
+  First start downloads the model(s) (VPS ~1.3 GB, PoC ~20 GB). Follow it with:
     docker compose logs -f llm-coder
   Then run:  scripts/doctor.sh
 
   Resource budget check:  scripts/doctor.sh  (first section)
-  For LAN access from other machines, run windows/setup-lan.ps1 on Windows (docs/wsl-lan.md).
+  Next: docs/deploy-$PROFILE.md (network access, client setup).
 EOF

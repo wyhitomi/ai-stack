@@ -1,38 +1,40 @@
-# Resource budget
+# Resource budgets
 
-The stack runs entirely in Docker containers. Each one has a hard **cgroup limit** for CPU and memory. Together, all services except the main local model fit a fixed envelope of **4 CPU / 7 GB RAM**:
+Every container has a hard **cgroup limit** for memory (with `memswap_limit` equal to it, so no container swaps) and a **CPU cap**. Budgets are per profile, in `profiles/<profile>/stack.env`.
 
-| Service | CPUs | Memory | What drives its usage |
-|---|---:|---:|---|
-| postgres | 0.50 | 768 MB | tuned for the limit: `shared_buffers=192MB`, 60 connections, no parallel query |
-| litellm | 0.50 | 1024 MB | one worker (`--num_workers 1`), DB pool of 5 |
-| hindsight | 1.00 | 2048 MB | in-container embedding + reranker models on CPU (~1.0–1.5 GB RSS), one thread each |
-| hermes | 1.50 | 2560 MB | agent runtime **plus every shell command it runs** (builds, tests, git) |
-| llm-autocomplete | 0.50 | 768 MB | weights in VRAM; one compute thread |
-| **total** | **4.00** | **7168 MB** | |
-| llm-coder | unbounded | unbounded | the one service allowed to use more (GPU, plus CPU/RAM if you offload experts) |
+| Service | Memory | CPU cap | `vps` | `poc-wsl` |
+|---|---:|---:|:-:|:-:|
+| postgres | 512 MB | 0.50 | ✓ | ✓ |
+| litellm | 768 MB | 0.50 | ✓ | ✓ |
+| hindsight | 1536 MB | 0.75 | ✓ | ✓ |
+| hermes | 1536 MB | 1.00 | ✓ | ✓ |
+| llm-autocomplete | 512 MB | 0.50 | — (served by llm-coder) | ✓ (GPU) |
+| llm-coder | 3072 MB | 3.00 | ✓ capped | **uncapped** (GPU + ~18 GB RAM) |
+| **counted total** | | | **7424 MB** of 8 GB | **4864 MB** ≤ 7168 MB |
 
-`memswap_limit` equals the memory limit, so a container never swaps. If it goes over its limit, the kernel OOM-kills it and Docker restarts it (`restart: unless-stopped`). That one service fails; the rest of the stack keeps running.
+**The PoC uses the VPS limits on purpose.** If Hermes, Hindsight, LiteLLM and Postgres run well in the PoC, they fit the VPS. Only the model is allowed to be bigger there.
 
-## Checking it
+## Memory vs. CPU
+
+- **Memory is a summed, hard budget.** It can't be shared or reclaimed in a hurry. `scripts/doctor.sh` fails if any counted container lacks a limit, or if the limits add up to more than `STACK_MEM_MB`.
+- **CPU caps are per service and may overlap.** CPU time is shared, so capping each service to a slice that sums to exactly 4 would just leave cores idle. The caps stop any one service (for example the model) from taking the whole machine. Each cap must be ≤ `STACK_CPUS`, and `doctor.sh` reports the sum.
+
+## When a container hits its limit
+
+The kernel OOM-kills it and Docker restarts it (`restart: unless-stopped`). The rest of the stack keeps running.
 
 ```bash
-scripts/doctor.sh        # first section: sums the limits of every non-model container
-docker stats             # live usage vs. limit per container
+docker stats                                         # live usage vs. limit
+docker inspect hermes -f '{{.State.OOMKilled}}'      # was it the limit?
 ```
 
-`doctor.sh` fails if any container except `llm-coder` has no limit, or if the limits add up to more than `STACK_CPUS` / `STACK_MEM_MB` in `.env`.
+Typical rebalancing, done in `.env` and kept within the total:
 
-## Moving budget between services
-
-The split lives in `.env` (`*_CPUS`, `*_MEM`). The total must stay within the envelope, so give to one service by taking from another, then run `docker compose up -d`. Typical cases:
-
-- **Hermes OOM-killed during `npm install` / large test suites** (`docker inspect hermes -f '{{.State.OOMKilled}}'`): raise `HERMES_MEM` to 3072m and lower `HINDSIGHT_MEM` to 1536m. Hindsight still runs at 1.5 GB, its documented minimum, though recall under load gets slower.
-- **Autocomplete feels laggy**: it is usually network or GPU bound, not CPU. Check `docker stats` before giving it more CPU.
-- **Hermes' browser tools** (headless Chromium) need ~500 MB each. Leave them off, or move memory to Hermes.
+- **Hermes OOM-killed during `npm install` / big test suites.** Raise `HERMES_MEM` to 2048m and lower `HINDSIGHT_MEM` to 1024m. Below 1.5 GB, Hindsight's local embedding and reranker models get tight; its docs list 1.5 GB as the minimum. Alternatively, keep heavy builds in CI.
+- **The VPS model is OOM-killed.** Lower `LLAMA_ARG_CACHE_RAM`, or use a `q4_0` V-cache (`profiles/vps/llm-coder.env`).
 
 ## What the limits don't cover
 
-- **The WSL VM itself** must be larger than the envelope: 7 GB + the model's host RAM + ~1.5 GB for the kernel and dockerd. See `windows/wslconfig.example`.
-- **GPU VRAM** is not limited by cgroups. The two llama.cpp servers share the card (see [models.md](models.md)).
-- **Disk**: models ~20 GB, images ~10 GB, Postgres grows with memories and logs.
+- **GPU VRAM** (PoC). cgroups don't limit it. llama.cpp's `--fit` sizes the coder to the free VRAM after autocomplete has loaded.
+- **The WSL VM size** (PoC). See `windows/wslconfig.example` (26 GB / 14 CPU).
+- **Disk.** Images ~10 GB. Models: VPS ~1.3 GB, PoC ~20 GB. Postgres grows with memories and logs.
