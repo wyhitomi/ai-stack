@@ -9,7 +9,7 @@ model_list:
   - model_name: coder
     litellm_params:
       # Local default: openai/coder at http://llm-coder:8080/v1. Without a local
-      # model these point at a remote GPU host or a hosted provider (.env).
+      # model (cpu profile, --local-model off) they point at an external API (.env).
       model: os.environ/CODER_MODEL       # e.g. openai/coder · openrouter/qwen/qwen3-coder
       api_base: os.environ/CODER_API_BASE
       api_key: os.environ/CODER_API_KEY   # "none" locally
@@ -26,7 +26,7 @@ model_list:
   - model_name: autocomplete
     litellm_params:
       model: os.environ/AUTOCOMPLETE_MODEL        # must support raw /completions (FIM)
-      api_base: os.environ/AUTOCOMPLETE_API_BASE  # poc: own GPU model · cpu: shares llm-coder
+      api_base: os.environ/AUTOCOMPLETE_API_BASE  # gpu: own FIM model · cpu: shares llm-coder
       api_key: os.environ/AUTOCOMPLETE_API_KEY
       timeout: 30
     model_info:

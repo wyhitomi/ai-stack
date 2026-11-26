@@ -4,7 +4,7 @@ Clients never see real model names. LiteLLM exposes stable aliases (`coder`, `au
 
 All defaults are Apache-2.0 (commercial use OK). Avoid Qwen2.5-Coder-**3B**: unlike its 0.5B/1.5B/7B/14B/32B siblings, it uses a non-commercial research license.
 
-## Profile `poc-wsl`: Blackwell 8 GB + 32 GB RAM
+## Profile `gpu` (default): Blackwell 8 GB + 32 GB RAM
 
 | Route | Model | Where it runs |
 |---|---|---|
@@ -22,7 +22,7 @@ Approximate VRAM budget:
 | coder: non-expert weights + compute buffers | ~1.5–2 GB |
 | margin (`LLAMA_ARG_FIT_TARGET=768`) + Windows desktop | ~1 GB |
 
-Knobs in `profiles/poc-wsl/llm-coder.env`, if VRAM is tight (the log shows `--fit` reducing what it offloads, or it OOMs):
+Knobs in `profiles/gpu/llm-coder.env`, if VRAM is tight (the log shows `--fit` reducing what it offloads, or it OOMs):
 
 - `LLAMA_ARG_CACHE_TYPE_V=q4_0` saves ~0.8 GB of KV cache, with a small quality cost.
 - `LLAMA_ARG_UBATCH=512` gives a smaller compute buffer, at the cost of slower prefill.
@@ -30,13 +30,11 @@ Knobs in `profiles/poc-wsl/llm-coder.env`, if VRAM is tight (the log shows `--fi
 
 If the GPU is the monitor's GPU, close GPU-heavy apps during long agent runs: Windows' own VRAM use reduces what `--fit` gets.
 
-## Profile `poc-wsl-cpu`: same box, CPU only (`docker-compose.cpu.yml`)
+## Profile `cpu`: same laptop, CPU only (`docker-compose.cpu.yml`)
 
 The same Qwen3-Coder-30B-A3B, at **Q3_K_M** (~14.7 GB) so that weights plus the 64k KV cache fit a 19 GB cap. With 10 threads, expect ~8–15 tok/s for generation and noticeably slower prompt processing than with the GPU. It's useful for an apples-to-apples CPU vs. GPU comparison, or to free the GPU for something else. One server answers `coder`, `autocomplete` and `memory`.
 
-## Profile `vps`: no local model
-
-The VPS runs no model. Its `coder`, `autocomplete` and `memory` routes point at the WSL PoC's `llm-coder` and `llm-autocomplete` over Tailscale, so the VPS gets exactly the models above. Setup: [deploy-vps.md](deploy-vps.md).
+The cpu profile can also run **without** a local model (`scripts/bootstrap.sh --profile cpu --local-model off`). Then every route goes to the external OpenAI-compatible endpoint you set in `.env` (`CODER_MODEL`, `CODER_API_BASE`, `CODER_API_KEY`). In that mode, prompts and memory extraction leave the laptop.
 
 ## Llama or Qwen?
 
@@ -50,7 +48,7 @@ The VPS runs no model. Its `coder`, `autocomplete` and `memory` routes point at 
 | **License** | Apache-2.0: no conditions beyond attribution | Llama Community License: acceptable-use policy, "Built with Llama" branding, 700M-MAU clause. Usable commercially, but not OSI-open |
 | **Small models for FIM autocomplete** | Qwen2.5-Coder 0.5B/1.5B/7B with FIM tokens | No maintained small code/FIM Llama |
 
-**Coding vs. reasoning is a model choice, not a family choice.** Qwen3-Coder is a non-thinking model. It answers directly and handles tool calls best, which is the right default for an agent. For reasoning-heavy work (algorithm design, tricky debugging, planning), swap in **Qwen3-30B-A3B-Thinking-2507**. It has the same size and the same split across GPU and RAM, so it's a one-line change in `profiles/poc-wsl/llm-coder.env`:
+**Coding vs. reasoning is a model choice, not a family choice.** Qwen3-Coder is a non-thinking model. It answers directly and handles tool calls best, which is the right default for an agent. For reasoning-heavy work (algorithm design, tricky debugging, planning), swap in **Qwen3-30B-A3B-Thinking-2507**. It has the same size and the same split across GPU and RAM, so it's a one-line change in `profiles/gpu/llm-coder.env`:
 
 ```
 LLAMA_ARG_HF_REPO=unsloth/Qwen3-30B-A3B-Thinking-2507-GGUF:Q4_K_M

@@ -11,7 +11,7 @@ There are two complementary paths:
 
 1. Install the **Continue** extension.
 2. Copy `vscode/continue-config.yaml` to `~/.continue/config.yaml`. On Windows that's `%USERPROFILE%\.continue\config.yaml`.
-3. Replace `AI_HOST` with the stack's address: on the PoC, the Windows machine's LAN IP (or `localhost` on that machine); on the VPS, its Tailscale IP (or `localhost` through an SSH tunnel).
+3. Replace `AI_HOST` with the laptop's LAN IP for other machines on the home LAN, or `localhost` on the laptop itself.
 4. Replace `sk-REPLACE_ME` with a key:
    - on the stack machine: `grep VSCODE_LLM_API_KEY .env`
    - for another person or laptop: `scripts/new-key.sh laptop-maria`, so each one has its own key, usage tracking and revocation in the LiteLLM UI.
@@ -26,7 +26,7 @@ If autocomplete inserts chat-style text ("Sure! Here's..."), the request went to
 
 ## ACP: Hermes as the in-editor agent
 
-1. Open your project **in WSL** (PoC: the "WSL" extension → *Connect to WSL*) or **on the VPS** (Remote - SSH), and keep it under `WORKSPACE_DIR`. That directory is mounted at the same path inside the Hermes container, so the paths line up.
+1. Open your project **in WSL** (the "WSL" extension → *Connect to WSL*) and keep it under `WORKSPACE_DIR`. That directory is mounted at the same path inside the Hermes container, so the paths line up.
 2. Install the **ACP Client** extension.
 3. Merge block A from `vscode/settings.acp.jsonc` into your settings.json.
 4. Open the ACP Client panel → **Hermes (ai-stack)** → Connect.

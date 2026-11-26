@@ -1,15 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ai-stack — GPU compose file (NVIDIA, incl. Blackwell / RTX 50xx)
 #
-#   Used by:  profiles/poc-wsl   WSL2 · 16 CPU / 32 GB · Blackwell 8 GB
+#   Used by:  profiles/gpu (default)   WSL2 laptop · 16 CPU / 32 GB · Blackwell 8 GB
 #   CPU twin: docker-compose.cpu.yml (same services, CPU model)
 #
 #   VS Code ──► :4000 LiteLLM ──┬──► llm-coder        (GPU + RAM, MoE split by --fit)
 #          └──► :8642 Hermes ──┘└──► llm-autocomplete (GPU, small FIM model)
 #                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
-# Every service except llm-coder runs with the VPS limits, so the PoC also
-# proves the stack fits the VPS. Model tuning: profiles/<profile>/llm-*.env.
+# Every service except llm-coder is capped (4 CPU / 7 GB together); the
+# coding model is the one service allowed to use more. Model tuning:
+# profiles/<profile>/llm-*.env. LAN-only: the model servers publish NO ports;
+# clients use LiteLLM :4000 / Hermes :8642, which the Windows firewall opens
+# to the home LAN subnet only (windows/setup-lan.ps1).
 # Keep the shared services identical to the CPU file: scripts/check-compose.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -56,7 +59,7 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     shm_size: 64m
     ports:
-      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never exposed.
+      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never on the LAN.
     deploy:
       resources:
         limits:
@@ -78,18 +81,13 @@ services:
     container_name: ai-llm-coder
     restart: unless-stopped
     env_file:
-      - profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <vps|poc-wsl>}/llm-coder.env
+      - profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <gpu|cpu>}/llm-coder.env
     environment:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
-      # Required key for every request (LiteLLM here and on the VPS send it).
-      LLAMA_API_KEY: ${CODER_API_KEY:-}
     volumes:
       - ./data/models:/root/.cache
-    ports:
-      # 127.0.0.1 by default. `bootstrap.sh --serve-vps` sets the Tailscale IP.
-      - "${CODER_BIND:-127.0.0.1}:${CODER_PORT:-8080}:8080"
     # Start after autocomplete so --fit sizes the coder around the VRAM it uses
     depends_on:
       llm-autocomplete:
@@ -103,7 +101,6 @@ services:
               count: all
               capabilities: [gpu]
     healthcheck:
-      # /health is exempt from LLAMA_API_KEY, so this keeps working with a key set
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 5s
@@ -117,17 +114,13 @@ services:
     restart: unless-stopped
     env_file:
       - path: profiles/${STACK_PROFILE}/llm-autocomplete.env
-        required: false      # only GPU profiles ship one
+        required: false
     environment:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
       HF_TOKEN: ${HF_TOKEN:-}
-      LLAMA_API_KEY: ${CODER_API_KEY:-}
     volumes:
       - ./data/models:/root/.cache
-    ports:
-      # Same bind as llm-coder: 127.0.0.1, or the Tailscale IP with --serve-vps
-      - "${CODER_BIND:-127.0.0.1}:${AUTOCOMPLETE_PORT:-8081}:8080"
     deploy:
       resources:
         limits:

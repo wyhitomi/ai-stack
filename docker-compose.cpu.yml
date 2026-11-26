@@ -1,12 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ai-stack — CPU-ONLY compose file (no GPU required)
 #
-#   Used by:  profiles/vps          4 vCPU / 8 GB VPS, NO local model (→ WSL GPU)
-#             profiles/poc-wsl-cpu  the WSL PoC box without its GPU (local model)
+#   Used by:  profiles/cpu   the WSL2 laptop without its GPU
 #   GPU twin: docker-compose.gpu.yml (same services, GPU models)
 #
 #   VS Code ──► :4000 LiteLLM ──► llm-coder (llama.cpp, CPU)  ← OPTIONAL
-#          └──► :8642 Hermes ──┘   └──► or a remote GPU host / hosted provider
+#          └──► :8642 Hermes ──┘   └──► or an external OpenAI-compatible API
 #                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
 # The profile (.env → COMPOSE_FILE) selects this file. Model tuning lives in
@@ -57,7 +56,7 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     shm_size: 64m
     ports:
-      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never exposed.
+      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never on the LAN.
     deploy:
       resources:
         limits:
@@ -75,15 +74,15 @@ services:
   # One CPU llama.cpp server answers coder, autocomplete and memory.
   # Runs only with the `local-model` compose profile (LOCAL_MODEL=true in .env,
   # set by `bootstrap.sh --local-model on|off`). Without it, LiteLLM's routes
-  # point at a remote GPU host or a hosted provider (docs/deploy-vps.md).
+  # point at an external OpenAI-compatible endpoint (.env CODER_*).
   llm-coder:
     profiles: [local-model]
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: ai-llm-coder
     restart: unless-stopped
     env_file:
-      - path: profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <vps|poc-wsl|poc-wsl-cpu>}/llm-coder.env
-        required: false      # the vps profile has no local model
+      - path: profiles/${STACK_PROFILE:?run scripts/bootstrap.sh --profile <gpu|cpu>}/llm-coder.env
+        required: false
     environment:
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: "8080"
@@ -91,20 +90,19 @@ services:
     volumes:
       - ./data/models:/root/.cache
     healthcheck:
-      # /health is exempt from LLAMA_API_KEY, so this keeps working with a key set
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 120          # first boot downloads the model
       start_period: 60s
     networks: [ai]
-    # On the VPS the model is part of the 8 GB budget, so it is capped too.
+    # Capped from the profile (CODER_CPUS / CODER_MEM) so it cannot take WSL down.
     deploy:
       resources:
         limits:
-          cpus: "${CODER_CPUS:-3.0}"
-          memory: ${CODER_MEM:-3072m}
-    memswap_limit: ${CODER_MEM:-3072m}
+          cpus: "${CODER_CPUS:-10.0}"
+          memory: ${CODER_MEM:-19g}
+    memswap_limit: ${CODER_MEM:-19g}
 
   # ── Routing & management ───────────────────────────────────────────────────
   litellm:
