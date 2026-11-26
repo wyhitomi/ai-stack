@@ -42,7 +42,7 @@ Copy `windows/wslconfig.example` to `%UserProfile%\.wslconfig` (`setup-lan.ps1` 
 | swap | 8 GB | | absorbs the rare moment when every container sits at its limit (caps total 6.9 GB) |
 | processors | 14 | 2 | stack caps ≤ 4 + 8 model threads + headroom |
 
-The container limits are ceilings, not reservations. At idle, Hermes, Hindsight, LiteLLM and Postgres use ~2.5–3 GB together. That's why 24 GB is enough even though the caps add up to 6.4 GB. If Windows still feels starved, switch to the slightly smaller `ai/qwen3-coder:30B-A3B-UD-Q4_K_XL` tag (see [models.md](models.md)) and lower `memory` to 22 GB.
+The container limits are ceilings, not reservations. At idle, Hermes, Hindsight, LiteLLM and Postgres use ~2.5–3 GB together. That's why 24 GB is enough even though the caps add up to 8.5 GB. If Windows still feels starved, switch to the slightly smaller `ai/qwen3-coder:30B-A3B-UD-Q4_K_XL` tag (see [models.md](models.md)) and lower `memory` to 22 GB.
 
 ## 2. Docker inside WSL
 

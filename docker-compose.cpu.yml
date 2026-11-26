@@ -171,7 +171,8 @@ services:
       HINDSIGHT_API_LLM_BASE_URL: http://litellm:4000/v1
       HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:-pending}
       HINDSIGHT_API_LLM_MODEL: memory
-      # Embeddings + reranker run in-container on CPU (~1.0-1.5 GB RSS).
+      # Embeddings + reranker run in-container on CPU (~1.0-1.5 GB RSS once loaded,
+      # more while loading: 1536m got it OOM-killed in a restart loop).
       # One thread each so they stay inside their CPU cap.
       HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "true"
       HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "true"
@@ -191,8 +192,8 @@ services:
       resources:
         limits:
           cpus: "${HINDSIGHT_CPUS:-1.0}"
-          memory: ${HINDSIGHT_MEM:-1536m}
-    memswap_limit: ${HINDSIGHT_MEM:-1536m}
+          memory: ${HINDSIGHT_MEM:-3072m}
+    memswap_limit: ${HINDSIGHT_MEM:-3072m}
     networks: [ai]
 
   # ── Orchestration ──────────────────────────────────────────────────────────

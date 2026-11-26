@@ -21,7 +21,7 @@ docker compose ps --format '  {{.Service}}\t{{.State}}\t{{.Health}}'
 #         overlap (CPU time is shared), so their sum is reported, not enforced.
 echo "Resource budget (profile: $(get_env STACK_PROFILE))"
 max_cpu="$(get_env STACK_CPUS)"; max_cpu="${max_cpu:-4}"
-max_mem="$(get_env STACK_MEM_MB)"; max_mem="${max_mem:-7168}"
+max_mem="$(get_env STACK_MEM_MB)"; max_mem="${max_mem:-8704}"
 exempt=" $(get_env BUDGET_EXEMPT | tr ',' ' ') "
 rows=$(for c in $(docker compose ps -q); do
   docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$c"
