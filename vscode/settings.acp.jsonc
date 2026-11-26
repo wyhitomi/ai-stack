@@ -1,0 +1,32 @@
+// Hermes inside VS Code through ACP (extension: "ACP Client", formulahendry.acp-client).
+// ACP talks to `hermes acp` over stdin/stdout, so VS Code launches it with
+// `docker exec -i` into the running hermes container.
+//
+// Paths: Hermes edits files at the paths VS Code sends. The workspace must be
+// under WORKSPACE_DIR (mounted at the same path in the container). Open the
+// folder with the "WSL" extension (Remote - WSL) so the paths are Linux paths.
+//
+// Pick ONE block and merge it into your VS Code settings.json.
+{
+  // A) VS Code connected to WSL (Remote - WSL) on the stack machine — recommended
+  "acp.agents": {
+    "Hermes (ai-stack)": {
+      "command": "docker",
+      "args": ["exec", "-i", "hermes", "hermes", "acp"]
+    }
+  }
+
+  // B) VS Code on the same Windows machine, NOT in a WSL window
+  // "acp.agents": {
+  //   "Hermes (ai-stack)": {
+  //     "command": "wsl.exe",
+  //     "args": ["docker", "exec", "-i", "hermes", "hermes", "acp"]
+  //   }
+  // }
+
+  // C) Another LAN machine using VS Code Remote - SSH into the WSL box:
+  //    open the remote folder under WORKSPACE_DIR and use block A in the
+  //    *remote* settings. (ACP over a raw ssh pipe also works:
+  //    "command": "ssh", "args": ["-T", "you@ai-host", "docker exec -i hermes hermes acp"]
+  //    but then Hermes edits files on the server, not on your laptop.)
+}

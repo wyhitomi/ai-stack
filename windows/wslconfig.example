@@ -1,0 +1,17 @@
+# Copy to %UserProfile%\.wslconfig, then run `wsl --shutdown` in PowerShell.
+# Requires Windows 11 22H2+ and WSL 2.0+ (`wsl --version`).
+[wsl2]
+# Mirrored mode: WSL shares the Windows network interfaces, so a port bound
+# to 0.0.0.0 in WSL is reachable at the Windows machine's LAN IP.
+networkingMode=mirrored
+# Lets Windows apps reach WSL services on localhost (and vice-versa).
+hostAddressLoopback=true
+# Give the models room. Tune to your machine (leave ~8 GB for Windows).
+memory=48GB
+processors=12
+swap=16GB
+
+[experimental]
+# Return freed memory to Windows gradually.
+autoMemoryReclaim=gradual
+sparseVhd=true

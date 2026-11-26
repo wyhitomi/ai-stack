@@ -1,0 +1,61 @@
+# Continue (VS Code extension "Continue - open-source AI code agent")
+# Copy to ~/.continue/config.yaml on each machine that should use the stack.
+#
+#   AI_HOST  → the Windows machine's LAN IP (or localhost on the WSL host)
+#   API key  → VSCODE_LLM_API_KEY from .env, or a per-machine key from
+#              scripts/new-key.sh <alias>
+name: ai-stack
+version: 1.0.0
+schema: v1
+
+models:
+  # Raw local model: fast chat, edits, apply, and Continue's own agent mode.
+  - name: Coder (local)
+    provider: openai
+    model: coder
+    apiBase: http://AI_HOST:4000/v1
+    apiKey: sk-REPLACE_ME
+    roles: [chat, edit, apply]
+    capabilities: [tool_use]
+    defaultCompletionOptions:
+      contextLength: 65536
+      maxTokens: 8192
+      temperature: 0.2
+
+  # Hermes Agent: long-running tasks with its own tools, skills and long-term
+  # memory (Hindsight/Postgres). Slower — it may run many tool calls per turn.
+  - name: Hermes Agent
+    provider: openai
+    model: hermes-agent
+    apiBase: http://AI_HOST:4000/v1
+    apiKey: sk-REPLACE_ME
+    roles: [chat]
+    defaultCompletionOptions:
+      contextLength: 65536
+
+  # Inline autocomplete with the small FIM model.
+  - name: Autocomplete (local)
+    provider: openai
+    model: autocomplete
+    apiBase: http://AI_HOST:4000/v1
+    apiKey: sk-REPLACE_ME
+    roles: [autocomplete]
+    useLegacyCompletionsEndpoint: true      # raw /v1/completions, not chat
+    promptTemplates:
+      autocomplete: "<|fim_prefix|>{{{prefix}}}<|fim_suffix|>{{{suffix}}}<|fim_middle|>"
+    autocompleteOptions:
+      debounceDelay: 250
+      maxPromptTokens: 2048
+      onlyMyCode: true
+    defaultCompletionOptions:
+      temperature: 0.1
+      maxTokens: 256
+      stop: ["<|endoftext|>", "<|fim_pad|>", "<|file_sep|>", "<|im_end|>"]
+
+context:
+  - provider: code
+  - provider: diff
+  - provider: terminal
+  - provider: problems
+  - provider: open
+  - provider: currentFile

@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LiteLLM routing. Clients only ever see these model_name aliases, so you can
+# swap the backend model (or add a cloud fallback) without touching VS Code or
+# Hermes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+model_list:
+  # Main coding / agent model (chat + tool calling). Used by Hermes and Continue.
+  - model_name: coder
+    litellm_params:
+      model: openai/coder                 # "openai/" = generic OpenAI-compatible backend
+      api_base: http://llm-coder:8080/v1
+      api_key: "none"                     # llama.cpp does not check it
+      timeout: 600
+      stream_timeout: 600
+    model_info:
+      mode: chat
+      max_input_tokens: 65536             # keep in sync with CODER_CTX
+      supports_function_calling: true
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # Inline autocomplete (raw text completion, FIM prompt built by the editor).
+  - model_name: autocomplete
+    litellm_params:
+      model: text-completion-openai/autocomplete
+      api_base: http://llm-autocomplete:8080/v1
+      api_key: "none"
+      timeout: 30
+    model_info:
+      mode: completion
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # Alias used by Hindsight for memory extraction/reflection. Points to the same
+  # local coder model today; repoint it to a smaller/faster model later if the
+  # GPU is contended.
+  - model_name: memory
+    litellm_params:
+      model: openai/coder
+      api_base: http://llm-coder:8080/v1
+      api_key: "none"
+      timeout: 600
+    model_info:
+      mode: chat
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # Hermes Agent exposed as a "model": the full agent (tools, skills, memory)
+  # behind the same endpoint + key as the raw models. One URL for every client.
+  - model_name: hermes-agent
+    litellm_params:
+      model: openai/hermes-agent
+      api_base: http://hermes:8642/v1
+      api_key: os.environ/HERMES_API_KEY
+      timeout: 1800                       # agent turns can run many tool calls
+      stream_timeout: 1800
+    model_info:
+      mode: chat
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  # ── Optional cloud fallbacks (uncomment + set the key in .env) ─────────────
+  # - model_name: cloud-coder
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-5-5
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 1
+  timeout: 600
+  # Fall back to the cloud only when the local model errors out / is down:
+  # fallbacks: [{"coder": ["cloud-coder"]}]
+
+litellm_settings:
+  drop_params: true            # silently drop OpenAI params llama.cpp doesn't support
+  request_timeout: 600
+  set_verbose: false
+  json_logs: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Don't store prompt/response bodies in Postgres (your code stays out of the DB).
+  # Flip to false if you want full request logs in the UI.
+  disable_spend_logs: false
+  store_prompts_in_spend_logs: false

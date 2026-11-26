@@ -1,0 +1,10 @@
+{
+  "mode": "local_external",
+  "api_url": "http://hindsight:8888",
+  "bank_id": "dev",
+  "memory_mode": "hybrid",
+  "auto_retain": true,
+  "auto_recall": true,
+  "recall_budget": "mid",
+  "retain_context": "software development sessions between Hermes Agent and the developer"
+}

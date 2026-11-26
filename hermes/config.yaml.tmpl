@@ -1,0 +1,25 @@
+# Hermes Agent config — seeded into data/hermes/config.yaml by bootstrap.sh.
+# After the first boot, edit data/hermes/config.yaml (or `hermes config set`),
+# not this template.
+
+model:
+  provider: custom
+  base_url: http://litellm:4000/v1
+  default: coder
+  key_env: HERMES_LLM_API_KEY      # virtual key injected by docker-compose
+  context_length: 65536            # keep in sync with CODER_CTX (Hermes needs >= 64k)
+
+memory:
+  provider: hindsight              # long-term memory → Hindsight → Postgres
+
+terminal:
+  backend: local                   # commands run inside the hermes container
+  cwd: __WORKSPACE_DIR__           # same path as on the WSL host
+  timeout: 180
+
+gateway:
+  platforms:
+    api_server:
+      # Strict OpenAI clients (and LiteLLM's proxy) choke on Hermes' custom
+      # `hermes.tool.progress` SSE events. Content chunks are unaffected.
+      tool_progress_events: false

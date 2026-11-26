@@ -1,0 +1,213 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ai-stack — local AI-assisted development
+#
+#   VS Code / LAN clients
+#        │
+#        ├──► :8642  Hermes Agent API  (agent: tools, skills, memory)
+#        │             │
+#        └──► :4000  LiteLLM proxy  ◄──┘   (routing, keys, budgets, logs)
+#                      │
+#          ┌───────────┼──────────────┐
+#          ▼           ▼              ▼
+#      llm-coder  llm-autocomplete  (optional cloud fallback)
+#      (llama.cpp) (llama.cpp)
+#
+#   Hermes ──► Hindsight (long-term memory) ──► Postgres + pgvector
+#   LiteLLM ─────────────────────────────────► Postgres (keys, spend, logs)
+#
+# Only LiteLLM and the Hermes API are published on the LAN. Everything else is
+# reachable on the internal `ai` network or on 127.0.0.1 only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: ai-stack
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+networks:
+  ai:
+    name: ai-stack
+
+services:
+  # ── Persistence ────────────────────────────────────────────────────────────
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    container_name: ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/bootstrap.sh}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:?run scripts/bootstrap.sh}
+      HINDSIGHT_DB_PASSWORD: ${HINDSIGHT_DB_PASSWORD:?run scripts/bootstrap.sh}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"   # local admin only (psql, DBeaver). Never LAN.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [ai]
+
+  # ── Local models ───────────────────────────────────────────────────────────
+  llm-coder:
+    <<: *gpu
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: ai-llm-coder
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - -hf
+      - ${CODER_MODEL}
+      - --alias
+      - coder
+      - --ctx-size
+      - "${CODER_CTX:-65536}"
+      - --parallel
+      - "${CODER_PARALLEL:-1}"
+      - --n-gpu-layers
+      - "999"
+      - --cache-type-k
+      - ${CODER_KV_TYPE:-q8_0}
+      - --cache-type-v
+      - ${CODER_KV_TYPE:-q8_0}
+      - --jinja              # use the model's chat template → native tool calling
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - ./data/models:/root/.cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 120          # first boot downloads ~18 GB
+      start_period: 60s
+    networks: [ai]
+
+  llm-autocomplete:
+    <<: *gpu
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: ai-llm-autocomplete
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - -hf
+      - ${AUTOCOMPLETE_MODEL}
+      - --alias
+      - autocomplete
+      - --ctx-size
+      - "${AUTOCOMPLETE_CTX:-8192}"
+      - --n-gpu-layers
+      - "999"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - ./data/models:/root/.cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    networks: [ai]
+
+  # ── Routing & management ───────────────────────────────────────────────────
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    container_name: ai-litellm
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run scripts/bootstrap.sh}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?run scripts/bootstrap.sh}
+      UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD}
+      STORE_MODEL_IN_DB: "False"     # config.yaml in git is the source of truth
+      HERMES_API_KEY: ${HERMES_API_KEY}     # for the hermes-agent route
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "${LAN_BIND:-0.0.0.0}:${LITELLM_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [ai]
+
+  # ── Memory ─────────────────────────────────────────────────────────────────
+  hindsight:
+    image: ${HINDSIGHT_IMAGE:-ghcr.io/vectorize-io/hindsight:latest}
+    container_name: ai-hindsight
+    restart: unless-stopped
+    stop_grace_period: 75s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${HINDSIGHT_DB_PASSWORD}@postgres:5432/hindsight
+      # Hindsight's own LLM calls (fact extraction, reflection) go through LiteLLM
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: http://litellm:4000/v1
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:-pending}
+      HINDSIGHT_API_LLM_MODEL: memory
+      # Embeddings + reranker run locally inside the container (CPU) by default.
+    ports:
+      - "127.0.0.1:9999:9999"   # Hindsight control-plane UI (browse/edit memories)
+    networks: [ai]
+
+  # ── Orchestration ──────────────────────────────────────────────────────────
+  hermes:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:stable}
+    container_name: hermes
+    restart: unless-stopped
+    depends_on:
+      litellm:
+        condition: service_healthy
+      hindsight:
+        condition: service_started
+    command: ["gateway", "run"]
+    environment:
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+      # OpenAI-compatible API server (what VS Code / LAN clients talk to)
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: ${HERMES_API_KEY:?run scripts/bootstrap.sh}
+      API_SERVER_MODEL_NAME: hermes-agent
+      # Key Hermes uses to call LiteLLM (referenced by key_env in config.yaml)
+      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY:-pending}
+      HINDSIGHT_API_URL: http://hindsight:8888
+    volumes:
+      - ./data/hermes:/opt/data
+      # Same absolute path inside and outside → paths line up with VS Code
+      - ${WORKSPACE_DIR}:${WORKSPACE_DIR}
+    ports:
+      # Direct Hermes API. LAN clients can use LiteLLM's `hermes-agent` model
+      # instead; set HERMES_BIND=127.0.0.1 in .env to keep this port local.
+      - "${HERMES_BIND:-0.0.0.0}:${HERMES_API_PORT:-8642}:8642"
+    networks: [ai]

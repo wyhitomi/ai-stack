@@ -1,0 +1,10 @@
+# CPU-only override (no NVIDIA GPU, or for testing the wiring).
+#   docker compose -f docker-compose.yml -f compose.cpu.yml up -d
+# Expect ~5-15 tok/s on the 30B-A3B MoE with a fast CPU; use a 7B model for comfort.
+services:
+  llm-coder:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    deploy: !reset {}
+  llm-autocomplete:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    deploy: !reset {}
