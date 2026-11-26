@@ -64,13 +64,25 @@ fi
 
 # Apply the profile: every KEY=VALUE in stack.env overwrites .env. Switching
 # profiles later re-applies the new one (secrets and keys are untouched).
+PROFILE_SUM="$(cksum < "profiles/$PROFILE/stack.env" | cut -d' ' -f1)"
 if [[ "$(get_env STACK_PROFILE)" != "$PROFILE" ]]; then
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Z_]+= ]] || continue
     set_env "${line%%=*}" "${line#*=}"
   done < "profiles/$PROFILE/stack.env"
   log "Applied profile '$PROFILE'"
+elif [[ "$(get_env PROFILE_SUM)" != "$PROFILE_SUM" ]]; then
+  # Same profile, but its file changed (e.g. after git pull): re-apply the
+  # resource and structure keys. Routes, keys and secrets in .env are kept.
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(STACK_[A-Z]+|BUDGET_EXEMPT|COMPOSE_FILE|[A-Z]+_CPUS|[A-Z]+_MEM)= ]] || continue
+    if [[ "$(get_env "${line%%=*}")" != "${line#*=}" ]]; then
+      log "Profile update: ${line%%=*} $(get_env "${line%%=*}") → ${line#*=}"
+      set_env "${line%%=*}" "${line#*=}"
+    fi
+  done < "profiles/$PROFILE/stack.env"
 fi
+set_env PROFILE_SUM "$PROFILE_SUM"
 IS_GPU=0; [[ "$(get_env COMPOSE_FILE)" == *gpu* ]] && IS_GPU=1
 
 # ── Local model on/off (cpu profile only) ────────────────────────────────────
@@ -157,7 +169,7 @@ docker pull --quiet "$CURL_IMAGE" >/dev/null
 # Models start LAST (phase 4): a model download/start problem must not block
 # Postgres, LiteLLM, Hindsight or Hermes, and it gets its own diagnosis.
 log "Starting postgres + litellm…   (profile: $PROFILE, local model: $(get_env LOCAL_MODEL))"
-docker compose up -d postgres litellm
+docker compose up -d --remove-orphans postgres litellm
 wait_healthy ai-postgres 120 postgres || { diagnose ai-postgres; exit 1; }
 wait_healthy ai-litellm  300 litellm  || { diagnose ai-litellm;  exit 1; }
 log "postgres + litellm are healthy"

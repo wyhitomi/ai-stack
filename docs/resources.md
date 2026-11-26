@@ -7,10 +7,10 @@ Every container has a hard **cgroup memory limit** (with `memswap_limit` equal t
 | Service | Memory | CPU cap | `gpu` | `cpu` |
 |---|---:|---:|:-:|:-:|
 | postgres | 512 MB | 0.50 | ✓ | ✓ |
-| litellm | 768 MB | 0.50 | ✓ | ✓ |
-| hindsight | 2048 MB | 1.00 | ✓ | ✓ |
+| litellm | 2048 MB | 0.50 | ✓ | ✓ |
+| hindsight | 1536 MB | 1.00 | ✓ | ✓ |
 | hermes | 3072 MB | 2.00 | ✓ | ✓ |
-| **envelope total** | | | **6400 MB** ≤ 7168 | **6400 MB** ≤ 7168 |
+| **envelope total** | | | **7168 MB** = 7168 | **7168 MB** = 7168 |
 | llm-coder (serves coder + autocomplete + memory) | | | **uncapped**: ~6–7 GB VRAM + ~15–17 GB RAM | 22 GB / 10 CPU cap: ~21.5 GB RAM |
 
 Hermes gets the largest share because the agent's shell commands (builds, tests, git) run inside its container.
@@ -32,7 +32,8 @@ docker inspect hermes -f '{{.State.OOMKilled}}'      # was it the limit?
 
 Rebalance in `.env` and keep the total within the envelope:
 
-- **Hermes OOM-killed during `npm install` / big test suites.** Both profiles have ~768 MB of headroom in the envelope. Raise `HERMES_MEM` by up to that much, or take from Hindsight. Below 1.5 GB, Hindsight's local embedding and reranker models get tight; its docs list 1.5 GB as the minimum. To lift the envelope itself, raise `STACK_MEM_MB`: on a 32 GB laptop the 7 GB envelope is a choice, not a hard limit.
+- **LiteLLM exits with 137 right after starting.** It's killed for memory while loading, before it logs anything. The proxy with its database client needs ~1–1.5 GB, so `LITELLM_MEM` must stay ≥ 1536m. (768 MB was too small and was raised to 2048m.)
+- **Hermes OOM-killed during `npm install` / big test suites.** The envelope is fully allocated. Hindsight is already at its documented minimum (1.5 GB), so the way to give Hermes more is to raise the envelope: on a 32 GB laptop the 7 GB envelope is a choice, not a hard limit. E.g. `STACK_MEM_MB=8192` and `HERMES_MEM=4096m`.
 - **A GPU model container dies within seconds of starting.** The CUDA runtime alone needs ~0.5–1 GB of host RAM before the model loads, so a GPU llama.cpp container needs a cap of at least ~1.5 GB. (512 MB was too small and was raised to 2 GB.) `bootstrap.sh` prints the container's OOM status and last log lines when this happens.
 - **The cpu-profile model OOM-killed.** Lower `LLAMA_ARG_CACHE_RAM` or use a `q4_0` V-cache (`profiles/cpu/llm-coder.env`).
 

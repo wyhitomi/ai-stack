@@ -46,6 +46,10 @@ wait_healthy() {
     health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null || true)
     restarts=$(docker inspect -f '{{.RestartCount}}' "$c" 2>/dev/null || echo 0)
     [[ "$status" == running && "$health" == healthy ]] && return 0
+    # While restarting, ExitCode is the previous run's: remember a kill (137).
+    if [[ "$status" == restarting ]]; then
+      LAST_EXIT=$(docker inspect -f '{{.State.ExitCode}}' "$c" 2>/dev/null || echo 0)
+    fi
     [[ "$status" == exited || "$status" == dead || "$status" == missing ]] && return 1
     [[ "$health" == unhealthy ]] && return 1
     (( restarts - base >= 2 )) && return 1   # crash loop under restart: unless-stopped
@@ -67,9 +71,13 @@ diagnose() {
   docker inspect -f '  status={{.State.Status}} exit={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} restarts={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" >&2 2>/dev/null || true
   logs="$(docker logs --tail 40 "$c" 2>&1 | tr -d '\r')"
   printf '  ── last log lines ──\n%s\n  ────────────────────\n' "$(sed 's/^/  /' <<<"$logs")" >&2
-  local oom; oom=$(docker inspect -f '{{.State.OOMKilled}} {{.State.ExitCode}}' "$c" 2>/dev/null || true)
-  if [[ "$oom" == true* || "$oom" == *" 137" ]]; then
-    warn "It hit its memory limit. Raise the matching *_MEM in .env (e.g. AUTOCOMPLETE_MEM=3g), then re-run."
+  local oom limit; oom=$(docker inspect -f '{{.State.OOMKilled}} {{.State.ExitCode}}' "$c" 2>/dev/null || true)
+  limit=$(docker inspect -f '{{.HostConfig.Memory}}' "$c" 2>/dev/null || echo 0)
+  # 137 = SIGKILL. Docker does not always set OOMKilled on cgroup v2, and a
+  # process killed while loading leaves an empty log: both point to memory.
+  if [[ "$oom" == true* || "$oom" == *" 137" || "${LAST_EXIT:-0}" == 137 ]] || { [[ -z "${logs//[[:space:]]/}" ]] && (( limit > 0 )); }; then
+    warn "Killed (exit 137 / no log output): it most likely hit its memory limit of $((limit / 1024 / 1024)) MB."
+    warn "Raise the matching *_MEM in .env (e.g. LITELLM_MEM=2048m), keep the envelope in mind (docs/resources.md), then re-run."
   elif grep -qiE 'certificate|ssl|tls' <<<"$logs"; then
     warn "TLS error while downloading the model: typical on a corporate network that inspects HTTPS."
     warn "Download the .gguf in a browser instead and point the profile at it (docs/models.md → 'Offline / corporate network')."
