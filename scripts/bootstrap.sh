@@ -83,6 +83,16 @@ elif [[ "$(get_env PROFILE_SUM)" != "$PROFILE_SUM" ]]; then
   done < "profiles/$PROFILE/stack.env"
 fi
 set_env PROFILE_SUM "$PROFILE_SUM"
+# Older versions ran a separate llm-autocomplete container and wrote its URL
+# into .env. It no longer exists (llm-coder serves autocomplete too), and the
+# route would fail with "Name or service not known": point it back to the profile.
+for route in CODER AUTOCOMPLETE MEMORY; do
+  if [[ "$(get_env ${route}_API_BASE)" == *llm-autocomplete* ]]; then
+    new_base="$(grep -E "^${route}_API_BASE=" "profiles/$PROFILE/stack.env" | cut -d= -f2-)"
+    set_env ${route}_API_BASE "${new_base:-http://llm-coder:8080/v1}"
+    log "Fixed stale ${route}_API_BASE (llm-autocomplete no longer exists) → ${new_base:-http://llm-coder:8080/v1}"
+  fi
+done
 IS_GPU=0; [[ "$(get_env COMPOSE_FILE)" == *gpu* ]] && IS_GPU=1
 
 # ── Local model on/off (cpu profile only) ────────────────────────────────────
