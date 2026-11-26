@@ -59,6 +59,16 @@ chk "litellm lists models (vscode key)"   dcurl http://litellm:4000/v1/models -H
 chk "hindsight API"                       dcurl http://hindsight:8888/health
 chk "hermes API /v1/models"               dcurl http://hermes:8642/v1/models -H "Authorization: Bearer $HK"
 chk "LAN port 4000 published"             bash -c "docker port ai-litellm 4000 | grep -q ."
+if [[ -f telegram.env ]]; then
+  # Token goes to curl on stdin (-K -), never on a command line.
+  chk "telegram bot token valid (getMe)"  bash -c "grep -E '^TELEGRAM_BOT_TOKEN=.' telegram.env | cut -d= -f2- \
+    | sed 's|.*|url = \"https://api.telegram.org/bot&/getMe\"|' \
+    | docker run -i --rm $CURL_IMAGE -fsS --max-time 20 -K - | grep -q '\"ok\":true'"
+  chk "telegram allowlist set"            grep -qE '^TELEGRAM_ALLOWED_USERS=[0-9-]' telegram.env
+  chk "hermes has the telegram token"     bash -c "docker exec hermes printenv TELEGRAM_BOT_TOKEN | grep -q ."
+else
+  echo "  · telegram off (no telegram.env; scripts/setup-telegram.sh)"
+fi
 
 echo "Inference"
 t0=$(date +%s)

@@ -207,6 +207,11 @@ services:
       hindsight:
         condition: service_started
     command: ["gateway", "run"]
+    # Optional Telegram gateway: ./telegram.env is git-ignored and only loaded
+    # when it exists (scripts/setup-telegram.sh, docs/telegram.md).
+    env_file:
+      - path: ./telegram.env
+        required: false
     environment:
       HERMES_UID: ${HERMES_UID:-1000}
       HERMES_GID: ${HERMES_GID:-1000}

@@ -79,6 +79,7 @@ Then:
 1. **Home LAN access.** Run `windows\setup-lan.ps1` as Administrator, then `wsl --shutdown` ([guide](docs/setup-wsl.md#4-home-lan-access-and-nothing-else)).
 2. **VS Code.** Copy `vscode/continue-config.yaml` to `~/.continue/config.yaml` and fill in the host and key ([docs/vscode.md](docs/vscode.md)).
 3. **Hermes CLI** (optional): `docker exec -it hermes hermes` opens the full terminal UI.
+4. **Telegram** (optional): `scripts/setup-telegram.sh` connects Hermes to your own bot. The token stays in the git-ignored `telegram.env`, and Hermes connects outbound only, so no port is opened ([docs/telegram.md](docs/telegram.md)).
 
 ## Endpoints
 
@@ -128,6 +129,7 @@ docker exec hermes hermes backup        # Hermes' own snapshot (never copy state
 - For a tighter setup, set `HERMES_BIND=127.0.0.1` in `.env`. LAN clients still reach Hermes through LiteLLM, with per-user keys that you can revoke.
 - `LITELLM_MASTER_KEY` is the admin key. It stays on the laptop. Give other machines virtual keys only (`scripts/new-key.sh`).
 - The firewall rules are limited to the **home LAN subnet** and the **Private** network profile. On other networks (café, office) nothing is reachable from outside. Never forward 4000 or 8642 on your router.
+- **Telegram:** everyone in `TELEGRAM_ALLOWED_USERS` can drive Hermes, shell included. The bot token and allowlist live only in `telegram.env`, which is git-ignored. Never commit it ([docs/telegram.md](docs/telegram.md#security)).
 - `LITELLM_SALT_KEY` encrypts credentials stored in the DB. Changing it after the first run makes them unreadable.
 
 ## Layout
@@ -137,13 +139,14 @@ docker-compose.gpu.yml    full stack, NVIDIA GPU, Blackwell-ready (profile gpu, 
 docker-compose.cpu.yml    full stack, CPU only, optional local model (profile cpu)
 profiles/{gpu,cpu}/       stack.env (budget, binds, compose file) + llm-*.env (model tuning)
 .env.example              shared settings + secrets (bootstrap.sh → .env)
+telegram.env.example      optional Telegram bot settings (setup-telegram.sh → telegram.env, git-ignored)
 litellm/config.yaml       model routes, fallbacks, logging
 postgres/init/            first-boot DB/role/extension setup
 hermes/                   Hermes config template + Hindsight plugin config
-scripts/                  install-docker-wsl, bootstrap, doctor (health + budget), new-key, check-compose
+scripts/                  install-docker-wsl, bootstrap, doctor (health + budget), new-key, check-compose, setup-telegram
 windows/                  .wslconfig + home-LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
-docs/                     setup-wsl, models, resources, vscode
+docs/                     setup-wsl, models, resources, vscode, telegram
 CONTRIBUTING.md           Conventional Commits + branch naming (hook: .githooks/commit-msg)
 CLAUDE.md                 the same rules for AI coding assistants
 LICENSE                   BSD 3-Clause
