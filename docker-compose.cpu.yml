@@ -101,8 +101,8 @@ services:
       resources:
         limits:
           cpus: "${CODER_CPUS:-10.0}"
-          memory: ${CODER_MEM:-19g}
-    memswap_limit: ${CODER_MEM:-19g}
+          memory: ${CODER_MEM:-22g}
+    memswap_limit: ${CODER_MEM:-22g}
 
   # ── Routing & management ───────────────────────────────────────────────────
   litellm:
@@ -180,6 +180,10 @@ services:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       TOKENIZERS_PARALLELISM: "false"
+      # Its embedding/reranker models are baked into the image: never call
+      # huggingface.co at start-up (blocked networks would stall it for minutes).
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     ports:
       - "127.0.0.1:9999:9999"   # Hindsight control-plane UI (browse/edit memories)
     deploy:

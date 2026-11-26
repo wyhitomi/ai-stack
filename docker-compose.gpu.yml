@@ -4,12 +4,12 @@
 #   Used by:  profiles/gpu (default)   WSL2 laptop · 16 CPU / 32 GB · Blackwell 8 GB
 #   CPU twin: docker-compose.cpu.yml (same services, CPU model)
 #
-#   VS Code ──► :4000 LiteLLM ──┬──► llm-coder        (GPU + RAM, MoE split by --fit)
-#          └──► :8642 Hermes ──┘└──► llm-autocomplete (GPU, small FIM model)
+#   VS Code ──► :4000 LiteLLM ──► llm-coder  (GPU + RAM, MoE split by --fit;
+#          └──► :8642 Hermes ──┘    one model: coder + autocomplete + memory)
 #                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
-# Every service except llm-coder is capped (4 CPU / 7 GB together); the
-# coding model is the one service allowed to use more. Model tuning:
+# Postgres, LiteLLM, Hindsight and Hermes are capped (4 CPU / 7 GB together);
+# the local models are the only services allowed to use more. Model tuning:
 # profiles/<profile>/llm-*.env. LAN-only: the model servers publish NO ports;
 # clients use LiteLLM :4000 / Hermes :8642, which the Windows firewall opens
 # to the home LAN subnet only (windows/setup-lan.ps1).
@@ -88,11 +88,8 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ./data/models:/root/.cache
-    # Start after autocomplete so --fit sizes the coder around the VRAM it uses
-    depends_on:
-      llm-autocomplete:
-        condition: service_healthy
     # The one uncapped service: GPU + the RAM its MoE experts need.
+    # Serves coder, autocomplete (FIM) and memory (profiles/gpu/llm-coder.env).
     deploy:
       resources:
         reservations:
@@ -106,38 +103,6 @@ services:
       timeout: 5s
       retries: 120          # first boot downloads the model
       start_period: 60s
-    networks: [ai]
-
-  llm-autocomplete:
-    image: ${LLAMACPP_GPU_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
-    container_name: ai-llm-autocomplete
-    restart: unless-stopped
-    env_file:
-      - path: profiles/${STACK_PROFILE}/llm-autocomplete.env
-        required: false
-    environment:
-      LLAMA_ARG_HOST: 0.0.0.0
-      LLAMA_ARG_PORT: "8080"
-      HF_TOKEN: ${HF_TOKEN:-}
-    volumes:
-      - ./data/models:/root/.cache
-    deploy:
-      resources:
-        limits:
-          cpus: "${AUTOCOMPLETE_CPUS:-0.5}"
-          memory: ${AUTOCOMPLETE_MEM:-512m}
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    memswap_limit: ${AUTOCOMPLETE_MEM:-512m}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 60
-      start_period: 30s
     networks: [ai]
 
   # ── Routing & management ───────────────────────────────────────────────────
@@ -216,6 +181,10 @@ services:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       TOKENIZERS_PARALLELISM: "false"
+      # Its embedding/reranker models are baked into the image: never call
+      # huggingface.co at start-up (blocked networks would stall it for minutes).
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     ports:
       - "127.0.0.1:9999:9999"   # Hindsight control-plane UI (browse/edit memories)
     deploy:
