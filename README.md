@@ -8,7 +8,7 @@ A self-hosted AI-assisted development stack, made only of Docker containers, for
 | **`poc-wsl`** | WSL2 · 16 CPU / 32 GB · Blackwell 8 GB | Qwen3-Coder-30B-A3B, GPU + RAM | proof of concept, reachable over the LAN |
 | **`poc-wsl-cpu`** | same WSL box, GPU unused | Qwen3-Coder-30B-A3B (Q3), CPU + RAM | CPU-vs-GPU comparison, or a fallback when the GPU is busy |
 
-There are two standalone Compose files: **`docker-compose.cpu.yml`** (used by `vps` and `poc-wsl-cpu`) and **`docker-compose.gpu.yml`** (used by `poc-wsl`). The profile writes the right one into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. To run a file directly: `docker compose -f docker-compose.gpu.yml up -d`. The shared services are kept identical in both files, and `scripts/check-compose.sh` verifies that.
+There are two standalone Compose files: **`docker-compose.cpu.yml`** (used by `vps` and `poc-wsl-cpu`) and **`docker-compose.gpu.yml`** (used by `poc-wsl`). **In the CPU file the local model is optional:** `scripts/bootstrap.sh --local-model off` routes every model call to a remote GPU host or a hosted provider instead ([how](docs/deploy-vps.md#running-without-a-local-model)). The profile writes the right one into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. To run a file directly: `docker compose -f docker-compose.gpu.yml up -d`. The shared services are kept identical in both files, and `scripts/check-compose.sh` verifies that.
 
 The PoC runs every non-model service with **the VPS limits**, so a working PoC shows the stack fits the VPS. Only the model differs.
 
@@ -70,7 +70,7 @@ On the host you only need **bash + Docker** (Engine with the compose plugin). Ev
 
 ```bash
 git clone <this repo> ~/ai-stack && cd ~/ai-stack
-scripts/bootstrap.sh --profile poc-wsl     # or: poc-wsl-cpu, vps
+scripts/bootstrap.sh --profile poc-wsl     # or: poc-wsl-cpu, vps  [--local-model off]
 docker compose logs -f llm-coder           # first start downloads the model
 scripts/doctor.sh                          # budget + every hop + a real inference
 ```

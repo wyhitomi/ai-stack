@@ -8,9 +8,11 @@ model_list:
   # Main coding / agent model (chat + tool calling). Used by Hermes and Continue.
   - model_name: coder
     litellm_params:
-      model: openai/coder                 # "openai/" = generic OpenAI-compatible backend
-      api_base: os.environ/CODER_API_BASE # local llm-coder, or a remote GPU host (profile)
-      api_key: os.environ/CODER_API_KEY   # "none" locally; the GPU host's LLAMA_API_KEY if remote
+      # Local default: openai/coder at http://llm-coder:8080/v1. Without a local
+      # model these point at a remote GPU host or a hosted provider (.env).
+      model: os.environ/CODER_MODEL       # e.g. openai/coder · openrouter/qwen/qwen3-coder
+      api_base: os.environ/CODER_API_BASE
+      api_key: os.environ/CODER_API_KEY   # "none" locally
       timeout: 600
       stream_timeout: 600
     model_info:
@@ -23,22 +25,22 @@ model_list:
   # Inline autocomplete (raw text completion, FIM prompt built by the editor).
   - model_name: autocomplete
     litellm_params:
-      model: text-completion-openai/autocomplete
-      api_base: os.environ/AUTOCOMPLETE_API_BASE  # poc: own GPU model · vps: shares llm-coder
-      api_key: "none"
+      model: os.environ/AUTOCOMPLETE_MODEL        # must support raw /completions (FIM)
+      api_base: os.environ/AUTOCOMPLETE_API_BASE  # poc: own GPU model · cpu: shares llm-coder
+      api_key: os.environ/AUTOCOMPLETE_API_KEY
       timeout: 30
     model_info:
       mode: completion
       input_cost_per_token: 0
       output_cost_per_token: 0
 
-  # Alias used by Hindsight for memory extraction/reflection. Always the LOCAL
-  # model (memory content never leaves the box, even if `coder` is remote).
+  # Alias used by Hindsight for memory extraction/reflection. Local by default.
+  # Without a local model it goes remote too: memory content then leaves the box.
   - model_name: memory
     litellm_params:
-      model: openai/memory
-      api_base: http://llm-coder:8080/v1
-      api_key: "none"
+      model: os.environ/MEMORY_MODEL
+      api_base: os.environ/MEMORY_API_BASE
+      api_key: os.environ/MEMORY_API_KEY
       timeout: 600
     model_info:
       mode: chat

@@ -160,9 +160,16 @@ services:
       UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD}
       STORE_MODEL_IN_DB: "False"     # config.yaml in git is the source of truth
+      # Routes (litellm/config.yaml). Defaults = the local llm-coder server.
+      CODER_MODEL: ${CODER_MODEL:-openai/coder}
       CODER_API_BASE: ${CODER_API_BASE:-http://llm-coder:8080/v1}
       CODER_API_KEY: ${CODER_API_KEY:-none}
+      AUTOCOMPLETE_MODEL: ${AUTOCOMPLETE_MODEL:-text-completion-openai/autocomplete}
       AUTOCOMPLETE_API_BASE: ${AUTOCOMPLETE_API_BASE:-http://llm-coder:8080/v1}
+      AUTOCOMPLETE_API_KEY: ${AUTOCOMPLETE_API_KEY:-${CODER_API_KEY:-none}}
+      MEMORY_MODEL: ${MEMORY_MODEL:-openai/memory}
+      MEMORY_API_BASE: ${MEMORY_API_BASE:-http://llm-coder:8080/v1}
+      MEMORY_API_KEY: ${MEMORY_API_KEY:-${CODER_API_KEY:-none}}
       HERMES_API_KEY: ${HERMES_API_KEY}     # for the hermes-agent route
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

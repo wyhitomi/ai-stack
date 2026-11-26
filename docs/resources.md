@@ -12,6 +12,8 @@ Every container has a hard **cgroup limit** for memory (with `memswap_limit` equ
 | llm-coder | | | 3 GB / 3 CPU | **uncapped** (GPU + ~18 GB RAM) | 19 GB / 10 CPU |
 | **counted total** | | | **7424 MB** of 8 GB | **4864 MB** ≤ 7168 | **4352 MB** ≤ 7168 |
 
+With `--local-model off` (CPU file only), `llm-coder` doesn't run. On the VPS that frees 3 GB. Give it to Hermes and Hindsight (e.g. 3072m / 2048m) to stay within 7424 MB.
+
 **The PoC uses the VPS limits on purpose.** If Hermes, Hindsight, LiteLLM and Postgres run well in the PoC, they fit the VPS. Only the model is allowed to be bigger there.
 
 ## Memory vs. CPU

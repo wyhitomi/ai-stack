@@ -6,6 +6,7 @@
 #   scripts/bootstrap.sh --profile poc-wsl       # WSL2 + NVIDIA GPU  → docker-compose.gpu.yml
 #   scripts/bootstrap.sh --profile poc-wsl-cpu   # same box, CPU only → docker-compose.cpu.yml
 #   scripts/bootstrap.sh --profile vps           # 4 vCPU / 8 GB      → docker-compose.cpu.yml
+#   scripts/bootstrap.sh --profile vps --local-model off   # no local model (CPU file)
 #   scripts/bootstrap.sh                     # re-run with the profile in .env
 #
 #   1. creates .env from .env.example + the profile, generates every secret
@@ -19,11 +20,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # ── Arguments ────────────────────────────────────────────────────────────────
 PROFILE=""
+LOCAL_MODEL_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --local-model) LOCAL_MODEL_ARG="${2:?--local-model needs on|off}"; shift 2 ;;
+    --local-model=*) LOCAL_MODEL_ARG="${1#*=}"; shift ;;
     --profile) PROFILE="${2:?--profile needs a value}"; shift 2 ;;
     --profile=*) PROFILE="${1#*=}"; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -51,6 +55,47 @@ if [[ "$(get_env STACK_PROFILE)" != "$PROFILE" ]]; then
     set_env "${line%%=*}" "${line#*=}"
   done < "profiles/$PROFILE/stack.env"
   log "Applied profile '$PROFILE'"
+fi
+
+# ── Local model on/off (CPU file only) ───────────────────────────────────────
+case "$LOCAL_MODEL_ARG" in
+  "") ;;
+  on|true|yes)
+    set_env LOCAL_MODEL true
+    # Back to fully local routes: profile defaults, no remote model/key overrides.
+    for route in CODER AUTOCOMPLETE MEMORY; do
+      set_env ${route}_API_BASE "$(grep -E "^${route}_API_BASE=" "profiles/$PROFILE/stack.env" | cut -d= -f2-)"
+      set_env ${route}_MODEL ""; set_env ${route}_API_KEY ""
+    done
+    log "Local model ON: all routes → local llama.cpp (set CODER_API_BASE again for a remote coder)" ;;
+  off|false|no) set_env LOCAL_MODEL false ;;
+  *) die "--local-model takes on|off" ;;
+esac
+if [[ "$(get_env COMPOSE_FILE)" == *gpu* && "$(get_env LOCAL_MODEL)" == false ]]; then
+  die "The GPU compose file always runs its local models. Use a CPU profile for --local-model off."
+fi
+is_local() { [[ -z "$1" || "$1" == *llm-coder* || "$1" == *llm-autocomplete* ]]; }
+if [[ "$(get_env LOCAL_MODEL)" == false ]]; then
+  # Validate first, change nothing until the remote route is complete.
+  coder_base="$(get_env CODER_API_BASE)"; coder_model="$(get_env CODER_MODEL)"
+  is_local "$coder_base" && die "LOCAL_MODEL=false but CODER_API_BASE is '${coder_base:-empty}'. Set CODER_MODEL / CODER_API_BASE / CODER_API_KEY in .env (see .env.example) and re-run."
+  [[ -n "$coder_model" ]] || die "LOCAL_MODEL=false: set CODER_MODEL in .env (e.g. openai/coder for a remote llama.cpp)."
+  # Routes still pointing at the (now absent) local server follow `coder`.
+  for route in AUTOCOMPLETE MEMORY; do
+    if is_local "$(get_env ${route}_API_BASE)"; then
+      set_env ${route}_API_BASE "$coder_base"
+      set_env ${route}_API_KEY  "$(get_env CODER_API_KEY)"
+      case "$route" in
+        MEMORY)       set_env MEMORY_MODEL "$coder_model" ;;
+        AUTOCOMPLETE) set_env AUTOCOMPLETE_MODEL "text-completion-openai/${coder_model#*/}" ;;
+      esac
+    fi
+  done
+  set_env COMPOSE_PROFILES ""
+  log "Local model OFF: coder/autocomplete/memory → $coder_base"
+  warn "Hindsight's memory extraction runs remotely: memory content leaves this machine."
+elif [[ "$(get_env COMPOSE_FILE)" == *cpu* ]]; then
+  set_env COMPOSE_PROFILES local-model
 fi
 
 # VPS: publish on the Tailscale interface when available, never on 0.0.0.0
@@ -100,11 +145,12 @@ log "Pulling images (first run downloads several GB)…"
 docker compose pull --quiet
 docker pull --quiet "$CURL_IMAGE" >/dev/null
 
-log "Starting postgres, local model(s), litellm…   (profile: $PROFILE)"
 # `up` without names starts everything in the profile; hermes/hindsight wait
 # for their keys, so start the first group explicitly.
-MODELS="llm-coder"
-docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete llm-coder"
+MODELS=""
+docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete"
+docker compose config --services | grep -qx llm-coder        && MODELS="$MODELS llm-coder"
+log "Starting postgres, ${MODELS:+local model(s), }litellm…   (profile: $PROFILE, local model: $(get_env LOCAL_MODEL))"
 docker compose up -d postgres $MODELS litellm
 
 log "Waiting for LiteLLM to become healthy…"

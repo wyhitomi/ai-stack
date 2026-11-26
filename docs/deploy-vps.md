@@ -35,6 +35,31 @@ docker compose up -d litellm
 
 The `memory` route always stays on the VPS's local model, so memory content never leaves the box.
 
+## Running without a local model
+
+The local model is **optional** on the CPU file (`vps`, `poc-wsl-cpu`). Without it, LiteLLM routes `coder`, `autocomplete` and `memory` to a remote OpenAI-compatible endpoint, and clients and Hermes don't notice the difference.
+
+```bash
+# 1. In .env, point `coder` somewhere (LiteLLM provider/model syntax):
+CODER_MODEL=openai/coder                       # a remote llama.cpp, e.g. the PoC GPU
+CODER_API_BASE=http://100.a.b.c:8080/v1        #   over Tailscale
+CODER_API_KEY=<the GPU host's CODER_API_KEY>
+#   …or a hosted open-weight provider:
+#   CODER_MODEL=openai/qwen/qwen3-coder   CODER_API_BASE=https://<provider>/v1   CODER_API_KEY=<key>
+
+# 2. Turn the local model off
+scripts/bootstrap.sh --local-model off
+docker compose up -d --remove-orphans          # stops the old llm-coder container
+```
+
+- `bootstrap.sh` refuses to turn the model off until `CODER_API_BASE` points at a real remote endpoint. It then redirects `autocomplete` and `memory` to the same endpoint, unless you set `AUTOCOMPLETE_*` / `MEMORY_*` yourself.
+- **Autocomplete** needs an endpoint that serves raw `/v1/completions` (FIM). llama.cpp does; many hosted chat APIs don't. Without one, turn autocomplete off in Continue.
+- **Privacy:** with the model off, Hindsight's memory extraction runs remotely, so conversation facts leave the VPS. `bootstrap.sh` warns you about this.
+- **Budget:** the 3 GB the model used becomes free. A good split is `HERMES_MEM=3072m` and `HINDSIGHT_MEM=2048m` in `.env` (still ≤ 7424 MB), then `docker compose up -d`.
+- Back to local: `scripts/bootstrap.sh --local-model on`. It restores every route to the local server.
+
+The GPU file (`poc-wsl`) always runs its local models; that's its purpose.
+
 ## Install
 
 ```bash

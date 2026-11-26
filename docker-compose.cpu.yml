@@ -5,8 +5,8 @@
 #             profiles/poc-wsl-cpu  the WSL PoC box without its GPU
 #   GPU twin: docker-compose.gpu.yml (same services, GPU models)
 #
-#   VS Code ──► :4000 LiteLLM ──► llm-coder (llama.cpp, CPU)
-#          └──► :8642 Hermes ──┘       ▲  one model: coder + autocomplete + memory
+#   VS Code ──► :4000 LiteLLM ──► llm-coder (llama.cpp, CPU)  ← OPTIONAL
+#          └──► :8642 Hermes ──┘   └──► or a remote GPU host / hosted provider
 #                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
 # The profile (.env → COMPOSE_FILE) selects this file. Model tuning lives in
@@ -71,9 +71,13 @@ services:
       retries: 20
     networks: [ai]
 
-  # ── Local model (tuning via profiles/<profile>/llm-coder.env) ──────────────
-  # CPU only: this one llama.cpp server answers coder, autocomplete and memory.
+  # ── Local model — OPTIONAL (tuning via profiles/<profile>/llm-coder.env) ───
+  # One CPU llama.cpp server answers coder, autocomplete and memory.
+  # Runs only with the `local-model` compose profile (LOCAL_MODEL=true in .env,
+  # set by `bootstrap.sh --local-model on|off`). Without it, LiteLLM's routes
+  # point at a remote GPU host or a hosted provider (docs/deploy-vps.md).
   llm-coder:
+    profiles: [local-model]
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: ai-llm-coder
     restart: unless-stopped
@@ -118,9 +122,16 @@ services:
       UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD}
       STORE_MODEL_IN_DB: "False"     # config.yaml in git is the source of truth
+      # Routes (litellm/config.yaml). Defaults = the local llm-coder server.
+      CODER_MODEL: ${CODER_MODEL:-openai/coder}
       CODER_API_BASE: ${CODER_API_BASE:-http://llm-coder:8080/v1}
       CODER_API_KEY: ${CODER_API_KEY:-none}
+      AUTOCOMPLETE_MODEL: ${AUTOCOMPLETE_MODEL:-text-completion-openai/autocomplete}
       AUTOCOMPLETE_API_BASE: ${AUTOCOMPLETE_API_BASE:-http://llm-coder:8080/v1}
+      AUTOCOMPLETE_API_KEY: ${AUTOCOMPLETE_API_KEY:-${CODER_API_KEY:-none}}
+      MEMORY_MODEL: ${MEMORY_MODEL:-openai/memory}
+      MEMORY_API_BASE: ${MEMORY_API_BASE:-http://llm-coder:8080/v1}
+      MEMORY_API_KEY: ${MEMORY_API_KEY:-${CODER_API_KEY:-none}}
       HERMES_API_KEY: ${HERMES_API_KEY}     # for the hermes-agent route
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
