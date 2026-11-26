@@ -1,28 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# ai-stack — local AI-assisted development, 100% Docker containers
+# ai-stack — CPU-ONLY compose file (no GPU required)
 #
-#   VS Code clients
-#        │
-#        ├──► :8642  Hermes Agent API  (agent: tools, skills, memory)
-#        │             │
-#        └──► :4000  LiteLLM proxy  ◄──┘   (routing, keys, budgets, logs)
-#                      │
-#              ┌───────┴────────┐
-#              ▼                ▼
-#          llm-coder     llm-autocomplete (poc-wsl only)
-#          (llama.cpp)     (llama.cpp)
+#   Used by:  profiles/vps          4 vCPU / 8 GB VPS, everything capped
+#             profiles/poc-wsl-cpu  the WSL PoC box without its GPU
+#   GPU twin: docker-compose.gpu.yml (same services, GPU models)
 #
-#   Hermes ──► Hindsight (long-term memory) ──► Postgres + pgvector
-#   LiteLLM ─────────────────────────────────► Postgres (keys, spend, logs)
+#   VS Code ──► :4000 LiteLLM ──► llm-coder (llama.cpp, CPU)
+#          └──► :8642 Hermes ──┘       ▲  one model: coder + autocomplete + memory
+#                 └──► Hindsight ──► Postgres + pgvector ◄── LiteLLM
 #
-# This base file is target-neutral and CPU-only. The deployment profile picks
-# the overrides through COMPOSE_FILE / COMPOSE_PROFILES in .env:
-#
-#   profiles/vps      4 vCPU / 8 GB, no GPU     → + compose.vps.yml
-#   profiles/poc-wsl  WSL2, Blackwell 8 GB GPU  → + compose.gpu.yml
-#
-# Model tuning lives in profiles/<profile>/llm-*.env (LLAMA_ARG_* variables).
-# Every service has hard CPU/memory limits; budgets are in profiles/*/stack.env.
+# The profile (.env → COMPOSE_FILE) selects this file. Model tuning lives in
+# profiles/<profile>/llm-coder.env; budgets in profiles/<profile>/stack.env.
+# Keep the shared services identical to the GPU file: scripts/check-compose.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ai-stack
@@ -82,7 +71,8 @@ services:
       retries: 20
     networks: [ai]
 
-  # ── Local models (all tuning via profiles/<profile>/llm-*.env) ─────────────
+  # ── Local model (tuning via profiles/<profile>/llm-coder.env) ──────────────
+  # CPU only: this one llama.cpp server answers coder, autocomplete and memory.
   llm-coder:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: ai-llm-coder
@@ -103,34 +93,13 @@ services:
       retries: 120          # first boot downloads the model
       start_period: 60s
     networks: [ai]
-    # Limits: vps → compose.vps.yml (3 GB cap). poc-wsl → uncapped by design.
-
-  llm-autocomplete:
-    profiles: [autocomplete]     # enabled by COMPOSE_PROFILES (poc-wsl only)
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
-    container_name: ai-llm-autocomplete
-    restart: unless-stopped
-    env_file:
-      - profiles/${STACK_PROFILE}/llm-autocomplete.env
-    environment:
-      LLAMA_ARG_HOST: 0.0.0.0
-      LLAMA_ARG_PORT: "8080"
-      HF_TOKEN: ${HF_TOKEN:-}
-    volumes:
-      - ./data/models:/root/.cache
+    # On the VPS the model is part of the 8 GB budget, so it is capped too.
     deploy:
       resources:
         limits:
-          cpus: "${AUTOCOMPLETE_CPUS:-0.5}"
-          memory: ${AUTOCOMPLETE_MEM:-512m}
-    memswap_limit: ${AUTOCOMPLETE_MEM:-512m}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 60
-      start_period: 30s
-    networks: [ai]
+          cpus: "${CODER_CPUS:-3.0}"
+          memory: ${CODER_MEM:-3072m}
+    memswap_limit: ${CODER_MEM:-3072m}
 
   # ── Routing & management ───────────────────────────────────────────────────
   litellm:

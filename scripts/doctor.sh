@@ -45,7 +45,7 @@ docker stats --no-stream --format '  {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $(d
 echo "Hops"
 chk "postgres accepts connections"        docker exec ai-postgres pg_isready -U postgres
 chk "llm-coder /health"                   docker exec ai-llm-coder curl -fsS http://localhost:8080/health
-if [[ "$(get_env COMPOSE_PROFILES)" == *autocomplete* ]]; then
+if docker compose config --services | grep -qx llm-autocomplete; then
   chk "llm-autocomplete /health"          docker exec ai-llm-autocomplete curl -fsS http://localhost:8080/health
 else
   echo "  · autocomplete served by llm-coder (profile $(get_env STACK_PROFILE))"

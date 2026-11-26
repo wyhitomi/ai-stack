@@ -3,8 +3,9 @@
 # One-shot setup for ai-stack. Safe to re-run: it never overwrites existing
 # secrets, keys or Hermes config. Needs only bash + docker on the host.
 #
-#   scripts/bootstrap.sh --profile poc-wsl   # WSL2 + NVIDIA GPU (PoC)
-#   scripts/bootstrap.sh --profile vps       # 4 vCPU / 8 GB, CPU only
+#   scripts/bootstrap.sh --profile poc-wsl       # WSL2 + NVIDIA GPU  → docker-compose.gpu.yml
+#   scripts/bootstrap.sh --profile poc-wsl-cpu   # same box, CPU only → docker-compose.cpu.yml
+#   scripts/bootstrap.sh --profile vps           # 4 vCPU / 8 GB      → docker-compose.cpu.yml
 #   scripts/bootstrap.sh                     # re-run with the profile in .env
 #
 #   1. creates .env from .env.example + the profile, generates every secret
@@ -35,7 +36,7 @@ command -v docker >/dev/null || die "docker not found. See docs/deploy-vps.md or
 docker compose version >/dev/null 2>&1 || die "docker compose v2 plugin not found."
 docker info >/dev/null 2>&1 || die "Docker daemon not reachable (is it running? are you in the docker group?)."
 
-if [[ "$PROFILE" == poc-wsl ]] && ! docker run --rm --gpus all ubuntu:24.04 nvidia-smi >/dev/null 2>&1; then
+if [[ "$(grep -E '^COMPOSE_FILE=' "profiles/$PROFILE/stack.env")" == *gpu* ]] && ! docker run --rm --gpus all ubuntu:24.04 nvidia-smi >/dev/null 2>&1; then
   die "Docker can't see the GPU. Install the NVIDIA Container Toolkit (docs/deploy-poc-wsl.md)."
 fi
 
@@ -102,7 +103,8 @@ docker pull --quiet "$CURL_IMAGE" >/dev/null
 log "Starting postgres, local model(s), litellm…   (profile: $PROFILE)"
 # `up` without names starts everything in the profile; hermes/hindsight wait
 # for their keys, so start the first group explicitly.
-MODELS="llm-coder"; [[ "$(get_env COMPOSE_PROFILES)" == *autocomplete* ]] && MODELS="llm-autocomplete llm-coder"
+MODELS="llm-coder"
+docker compose config --services | grep -qx llm-autocomplete && MODELS="llm-autocomplete llm-coder"
 docker compose up -d postgres $MODELS litellm
 
 log "Waiting for LiteLLM to become healthy…"
@@ -169,7 +171,7 @@ $(printf '\033[1;32m✓ ai-stack is up\033[0m')
   VS Code key (LiteLLM):  grep VSCODE_LLM_API_KEY .env
   Hermes API key:         grep HERMES_API_KEY .env
 
-  First start downloads the model(s) (VPS ~1.3 GB, PoC ~20 GB). Follow it with:
+  First start downloads the model(s) (vps ~1.3 GB, poc-wsl ~19 GB, poc-wsl-cpu ~15 GB). Follow it with:
     docker compose logs -f llm-coder
   Then run:  scripts/doctor.sh
 

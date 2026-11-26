@@ -30,6 +30,10 @@ Knobs in `profiles/poc-wsl/llm-coder.env`, if VRAM is tight (the log shows `--fi
 
 If the GPU is the monitor's GPU, close GPU-heavy apps during long agent runs: Windows' own VRAM use reduces what `--fit` gets.
 
+## Profile `poc-wsl-cpu`: same box, CPU only (`docker-compose.cpu.yml`)
+
+The same Qwen3-Coder-30B-A3B, at **Q3_K_M** (~14.7 GB) so that weights plus the 64k KV cache fit a 19 GB cap. With 10 threads, expect ~8–15 tok/s for generation and noticeably slower prompt processing than with the GPU. It's useful for an apples-to-apples CPU vs. GPU comparison, or to free the GPU for something else. One server answers `coder`, `autocomplete` and `memory`.
+
 ## Profile `vps`: 4 vCPU / 8 GB, no GPU
 
 | Route | Model | Budget |
@@ -47,6 +51,30 @@ Options, in order of impact:
 
 1. **Route `coder` to a GPU host.** Use the PoC machine or a GPU VPS, and keep the small model for `autocomplete` and `memory`. See [deploy-vps.md](deploy-vps.md).
 2. Try **IBM Granite 4.0-H-Micro** (3B, Apache-2.0, hybrid Mamba, built for tool calling; 128k context with a very small KV cache) as `coder`. It has no FIM, so keep autocomplete on the Qwen model. That needs a second llama.cpp container, so take its memory from Hindsight or Hermes.
+
+## Llama or Qwen?
+
+**For this stack and this hardware: Qwen, for both coding and reasoning.** The reasons, in order of weight:
+
+| | Qwen (Qwen3 / Qwen3-Coder) | Llama (3.x / 4) |
+|---|---|---|
+| **Fits 8 GB VRAM + 32 GB RAM at a usable speed** | Yes. Qwen3-Coder-30B-A3B and Qwen3-30B-A3B are MoE with ~3B active params, so 30B-class quality runs at small-model speed with experts in RAM | Partly. Llama 3.1 8B fits but is much weaker. Llama 3.3 70B (dense) runs at ~1–3 tok/s from RAM. Llama 4 Scout (109B total) needs ~60 GB at Q4, so it doesn't fit |
+| **Agentic coding / tool calling** (what Hermes needs) | Qwen3-Coder is trained specifically for multi-step agentic coding and tool use, with a 256k native context | Llama 3.x tool calling works but is weaker. Llama 4 was received as mediocre at coding for its size |
+| **Reasoning** | Qwen3 has dedicated *Thinking* variants (e.g. Qwen3-30B-A3B-Thinking-2507, same footprint) | No reasoning ("thinking") variant at these sizes |
+| **License** | Apache-2.0: no conditions beyond attribution | Llama Community License: acceptable-use policy, "Built with Llama" branding, 700M-MAU clause. Usable commercially, but not OSI-open |
+| **Small models for FIM autocomplete** | Qwen2.5-Coder 0.5B/1.5B/7B with FIM tokens | No maintained small code/FIM Llama |
+
+**Coding vs. reasoning is a model choice, not a family choice.** Qwen3-Coder is a non-thinking model. It answers directly and handles tool calls best, which is the right default for an agent. For reasoning-heavy work (algorithm design, tricky debugging, planning), swap in **Qwen3-30B-A3B-Thinking-2507**. It has the same size and the same split across GPU and RAM, so it's a one-line change in `profiles/poc-wsl/llm-coder.env`:
+
+```
+LLAMA_ARG_HF_REPO=unsloth/Qwen3-30B-A3B-Thinking-2507-GGUF:Q4_K_M
+```
+
+Thinking models emit long reasoning traces before answering. They're slower per turn and cost more of the 64k context in agent loops.
+
+Running both at once doesn't fit 32 GB of RAM (~18 GB each). Run one at a time, or keep the thinking model as a cloud/remote route in LiteLLM.
+
+Caveat: open-weight releases move fast, and this comparison reflects the models available when this stack was written. Before committing, check current agentic-coding results (e.g. SWE-bench Verified and Aider polyglot) for models that fit **≤ 8 GB VRAM + ~20 GB RAM**. Swapping costs one line in the profile.
 
 ## Validating a swap
 

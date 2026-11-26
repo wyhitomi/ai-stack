@@ -1,9 +1,0 @@
-# VPS override: the model is part of the 8 GB budget, so it gets a hard cap too.
-services:
-  llm-coder:
-    deploy:
-      resources:
-        limits:
-          cpus: "${CODER_CPUS:-3.0}"
-          memory: ${CODER_MEM:-3072m}
-    memswap_limit: ${CODER_MEM:-3072m}

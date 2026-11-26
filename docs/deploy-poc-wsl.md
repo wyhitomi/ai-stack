@@ -4,10 +4,20 @@ Target machine: **16 CPU / 32 GB RAM / NVIDIA Blackwell GPU with 8 GB** (RTX 50x
 
 The PoC runs every non-model service with **exactly the VPS limits**, so a passing PoC shows the stack fits the 4 vCPU / 8 GB VPS. Only the coding model differs. Here it uses the GPU and the spare RAM to run Qwen3-Coder-30B-A3B, where the VPS has to settle for a 1.5B model (see [models.md](models.md)).
 
+Two profiles run on this machine, each with its own Compose file:
+
+| Profile | Compose file | Model |
+|---|---|---|
+| `poc-wsl` | `docker-compose.gpu.yml` | Qwen3-Coder-30B-A3B Q4_K_M, split by `--fit` between the 8 GB GPU and RAM, plus a 1.5B autocomplete model on the GPU |
+| `poc-wsl-cpu` | `docker-compose.cpu.yml` | the same model at Q3_K_M, CPU and RAM only; one server for every route |
+
 ```bash
-scripts/bootstrap.sh --profile poc-wsl
+scripts/bootstrap.sh --profile poc-wsl       # GPU
+scripts/bootstrap.sh --profile poc-wsl-cpu   # CPU only (switching keeps secrets and keys)
 scripts/doctor.sh
 ```
+
+Switch between them with `docker compose down`, then bootstrap with the other profile. `data/` is shared, so memories, keys and Hermes sessions carry over.
 
 ## 1. Windows prerequisites
 

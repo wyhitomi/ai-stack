@@ -6,6 +6,9 @@ A self-hosted AI-assisted development stack, made only of Docker containers, for
 |---|---|---|---|
 | **`vps`** | 4 vCPU / 8 GB RAM, no GPU | Qwen2.5-Coder-1.5B on CPU | production. **Everything**, model included, fits in 8 GB |
 | **`poc-wsl`** | WSL2 · 16 CPU / 32 GB · Blackwell 8 GB | Qwen3-Coder-30B-A3B, GPU + RAM | proof of concept, reachable over the LAN |
+| **`poc-wsl-cpu`** | same WSL box, GPU unused | Qwen3-Coder-30B-A3B (Q3), CPU + RAM | CPU-vs-GPU comparison, or a fallback when the GPU is busy |
+
+There are two standalone Compose files: **`docker-compose.cpu.yml`** (used by `vps` and `poc-wsl-cpu`) and **`docker-compose.gpu.yml`** (used by `poc-wsl`). The profile writes the right one into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. To run a file directly: `docker compose -f docker-compose.gpu.yml up -d`. The shared services are kept identical in both files, and `scripts/check-compose.sh` verifies that.
 
 The PoC runs every non-model service with **the VPS limits**, so a working PoC shows the stack fits the VPS. Only the model differs.
 
@@ -67,7 +70,7 @@ On the host you only need **bash + Docker** (Engine with the compose plugin). Ev
 
 ```bash
 git clone <this repo> ~/ai-stack && cd ~/ai-stack
-scripts/bootstrap.sh --profile poc-wsl     # or: --profile vps
+scripts/bootstrap.sh --profile poc-wsl     # or: poc-wsl-cpu, vps
 docker compose logs -f llm-coder           # first start downloads the model
 scripts/doctor.sh                          # budget + every hop + a real inference
 ```
@@ -134,15 +137,14 @@ docker exec hermes hermes backup        # Hermes' own snapshot (never copy state
 ## Layout
 
 ```
-docker-compose.yml        all services (CPU base, limits on everything)
-compose.gpu.yml           poc-wsl: NVIDIA/CUDA override (Blackwell-ready image)
-compose.vps.yml           vps: caps the model too
+docker-compose.cpu.yml    full stack, CPU only (vps, poc-wsl-cpu)
+docker-compose.gpu.yml    full stack, NVIDIA GPU, Blackwell-ready (poc-wsl)
 profiles/<name>/          stack.env (budget, binds, overrides) + llm-*.env (model tuning)
 .env.example              shared settings + secrets (bootstrap.sh → .env)
 litellm/config.yaml       model routes, fallbacks, logging
 postgres/init/            first-boot DB/role/extension setup
 hermes/                   Hermes config template + Hindsight plugin config
-scripts/                  bootstrap, doctor (health + budget check), new-key
+scripts/                  bootstrap, doctor (health + budget), new-key, check-compose (cpu/gpu parity)
 windows/                  PoC: .wslconfig + LAN firewall script (PowerShell)
 vscode/                   Continue config, ACP settings
 docs/                     deploy-vps, deploy-poc-wsl, models, resources, vscode

@@ -2,15 +2,15 @@
 
 Every container has a hard **cgroup limit** for memory (with `memswap_limit` equal to it, so no container swaps) and a **CPU cap**. Budgets are per profile, in `profiles/<profile>/stack.env`.
 
-| Service | Memory | CPU cap | `vps` | `poc-wsl` |
-|---|---:|---:|:-:|:-:|
-| postgres | 512 MB | 0.50 | ✓ | ✓ |
-| litellm | 768 MB | 0.50 | ✓ | ✓ |
-| hindsight | 1536 MB | 0.75 | ✓ | ✓ |
-| hermes | 1536 MB | 1.00 | ✓ | ✓ |
-| llm-autocomplete | 512 MB | 0.50 | — (served by llm-coder) | ✓ (GPU) |
-| llm-coder | 3072 MB | 3.00 | ✓ capped | **uncapped** (GPU + ~18 GB RAM) |
-| **counted total** | | | **7424 MB** of 8 GB | **4864 MB** ≤ 7168 MB |
+| Service | Memory | CPU cap | `vps` (cpu file) | `poc-wsl` (gpu file) | `poc-wsl-cpu` (cpu file) |
+|---|---:|---:|:-:|:-:|:-:|
+| postgres | 512 MB | 0.50 | ✓ | ✓ | ✓ |
+| litellm | 768 MB | 0.50 | ✓ | ✓ | ✓ |
+| hindsight | 1536 MB | 0.75 | ✓ | ✓ | ✓ |
+| hermes | 1536 MB | 1.00 | ✓ | ✓ | ✓ |
+| llm-autocomplete | 512 MB | 0.50 | — (llm-coder) | ✓ (GPU) | — (llm-coder) |
+| llm-coder | | | 3 GB / 3 CPU | **uncapped** (GPU + ~18 GB RAM) | 19 GB / 10 CPU |
+| **counted total** | | | **7424 MB** of 8 GB | **4864 MB** ≤ 7168 | **4352 MB** ≤ 7168 |
 
 **The PoC uses the VPS limits on purpose.** If Hermes, Hindsight, LiteLLM and Postgres run well in the PoC, they fit the VPS. Only the model is allowed to be bigger there.
 
