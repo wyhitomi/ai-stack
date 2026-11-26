@@ -20,7 +20,7 @@ Models you get in Continue:
 
 - **Coder (local)**: direct model, fast. Use it for chat, `Ctrl+I` edits and Continue's agent mode.
 - **Hermes Agent**: the orchestrator, with its own tools, skills and long-term memory. Use it for "investigate and fix", multi-step work, and anything where it should remember project decisions across sessions.
-- **Autocomplete (local)**: ghost-text completions from the 1.5B FIM model.
+- **Autocomplete (local)**: ghost-text completions from Qwen3-Coder in fill-in-the-middle mode. It's the same model on its own slot, so completions don't wait for Hermes.
 
 If autocomplete inserts chat-style text ("Sure! Here's..."), the request went to the chat endpoint. Check that `useLegacyCompletionsEndpoint: true` is in the config, and that `scripts/doctor.sh` passes the FIM check.
 

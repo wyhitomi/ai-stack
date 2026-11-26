@@ -11,6 +11,7 @@ hostAddressLoopback=true
 #   typical use ≈ 17 GB model (MoE experts in RAM) + ~3 GB stack + ~1.5 GB OS
 #   container caps total 6.9 GB; swap absorbs the rare all-at-limit moment
 # Leaves 8 GB RAM and 2 CPUs for Windows, VS Code and the browser.
+# cpu profile (whole model in RAM, CODER_MEM=22g): use memory=27GB instead.
 memory=24GB
 processors=14
 swap=8GB

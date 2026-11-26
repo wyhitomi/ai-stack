@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The CPU and GPU compose files must define the shared services identically,
 # so a stack validated on one behaves the same on the other. Run after editing
-# either file. Only llm-coder / llm-autocomplete may differ.
+# either file. Only the model service (llm-coder) may differ.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 [[ -f .env ]] || die "No .env — run scripts/bootstrap.sh first"

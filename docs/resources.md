@@ -11,8 +11,7 @@ Every container has a hard **cgroup memory limit** (with `memswap_limit` equal t
 | hindsight | 2048 MB | 1.00 | ✓ | ✓ |
 | hermes | 3072 MB | 2.00 | ✓ | ✓ |
 | **envelope total** | | | **6400 MB** ≤ 7168 | **6400 MB** ≤ 7168 |
-| llm-autocomplete | | | 2 GB / 1 CPU cap (weights on GPU) | — (llm-coder serves it) |
-| llm-coder | | | **uncapped**: ~6 GB VRAM + ~17 GB RAM | 19 GB / 10 CPU cap: ~18.5 GB RAM |
+| llm-coder (serves coder + autocomplete + memory) | | | **uncapped**: ~6–7 GB VRAM + ~15–17 GB RAM | 22 GB / 10 CPU cap: ~21.5 GB RAM |
 
 Hermes gets the largest share because the agent's shell commands (builds, tests, git) run inside its container.
 
@@ -40,5 +39,5 @@ Rebalance in `.env` and keep the total within the envelope:
 ## What the limits don't cover
 
 - **GPU VRAM.** cgroups don't limit it. llama.cpp's `--fit` sizes the coder to the free VRAM after autocomplete has loaded.
-- **The WSL VM size.** See `windows/wslconfig.example` (24 GB + 8 GB swap, 14 CPU).
-- **Disk.** Images ~10 GB. Models ~19 GB (gpu) / ~15 GB (cpu). Postgres grows with memories and logs.
+- **The WSL VM size.** See `windows/wslconfig.example`: 24 GB + 8 GB swap for the gpu profile, ~27 GB for the cpu profile.
+- **Disk.** Images ~10 GB. One 18.6 GB model file, shared by both profiles. Postgres grows with memories and logs.

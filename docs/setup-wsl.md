@@ -4,8 +4,8 @@ Target: a Windows 11 laptop with **16 CPU / 32 GB RAM / NVIDIA Blackwell GPU wit
 
 | Profile | Compose file | Model |
 |---|---|---|
-| `gpu` (default) | `docker-compose.gpu.yml` | Qwen3-Coder-30B-A3B Q4_K_M, split by `--fit` between the 8 GB GPU and RAM, plus a 1.5B autocomplete model on the GPU |
-| `cpu` | `docker-compose.cpu.yml` | the same model at Q3_K_M, CPU and RAM only; one server for every route. Optional: `--local-model off` |
+| `gpu` (default) | `docker-compose.gpu.yml` | Qwen3-Coder-30B-A3B Q4_K_M, split by `--fit` between the 8 GB GPU and RAM. One model serves chat, agent, autocomplete and memory |
+| `cpu` | `docker-compose.cpu.yml` | the same model file, CPU and RAM only (needs a ~27 GB WSL VM). Optional: `--local-model off` |
 
 ```bash
 scripts/bootstrap.sh                 # gpu
@@ -22,6 +22,8 @@ To switch, run `docker compose down`, then bootstrap with the other profile. `da
 - An Ubuntu 24.04 distro: `wsl --install -d Ubuntu-24.04`.
 
 Check inside WSL: `nvidia-smi` should list the GPU and a CUDA version ≥ 12.8.
+
+Models are downloaded from **Docker Hub** (`ai/qwen3-coder`), not Hugging Face, which is blocked on the corporate network. See [models.md](models.md#where-the-model-comes-from-docker-hub).
 
 ### Laptop specifics
 
@@ -40,7 +42,7 @@ Copy `windows/wslconfig.example` to `%UserProfile%\.wslconfig` (`setup-lan.ps1` 
 | swap | 8 GB | | absorbs the rare moment when every container sits at its limit (caps total 6.9 GB) |
 | processors | 14 | 2 | stack caps ≤ 4 + 8 model threads + headroom |
 
-The container limits are ceilings, not reservations. At idle, Hermes, Hindsight, LiteLLM and Postgres use ~2.5–3 GB together. That's why 24 GB is enough even though the caps add up to 6.9 GB. If Windows still feels starved, switch to the model's Q3_K_M quant (see [models.md](models.md)) and lower `memory` to 20 GB.
+The container limits are ceilings, not reservations. At idle, Hermes, Hindsight, LiteLLM and Postgres use ~2.5–3 GB together. That's why 24 GB is enough even though the caps add up to 6.4 GB. If Windows still feels starved, switch to the slightly smaller `ai/qwen3-coder:30B-A3B-UD-Q4_K_XL` tag (see [models.md](models.md)) and lower `memory` to 22 GB.
 
 ## 2. Docker inside WSL
 

@@ -73,9 +73,11 @@ diagnose() {
   elif grep -qiE 'certificate|ssl|tls' <<<"$logs"; then
     warn "TLS error while downloading the model: typical on a corporate network that inspects HTTPS."
     warn "Download the .gguf in a browser instead and point the profile at it (docs/models.md → 'Offline / corporate network')."
+  elif grep -qiE 'toomanyrequests|429|rate limit' <<<"$logs"; then
+    warn "Docker Hub rate limit (anonymous pulls are limited per IP; a shared office IP hits it sooner). Wait and re-run, or use a local .gguf (docs/models.md)."
   elif grep -qiE 'could not resolve|timed out|connection refused|failed to (download|fetch)|curl|404|401|403' <<<"$logs"; then
-    warn "The model download failed (network, proxy or wrong repo name). Check internet access from containers:"
-    warn "  docker run --rm curlimages/curl:8.11.1 -sSI https://huggingface.co | head -1"
+    warn "The model download failed (network, proxy or wrong repo/tag). Check that containers reach the model source:"
+    warn "  docker run --rm curlimages/curl:8.11.1 -sSI https://registry-1.docker.io/v2/ | head -1   (expect HTTP 401: reachable)"
     warn "Behind a proxy: set it in ~/.docker/config.json (\"proxies\"), or use a local .gguf (docs/models.md)."
   elif grep -qiE 'no kernel image|CUDA error|cudaMalloc|out of memory' <<<"$logs"; then
     warn "CUDA/VRAM problem. Close GPU-heavy apps; if it says 'no kernel image', set LLAMACPP_GPU_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda13 in .env."

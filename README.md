@@ -6,8 +6,8 @@ There are two standalone Compose files, each selected by a profile:
 
 | Profile | Compose file | Coding model | When |
 |---|---|---|---|
-| **`gpu`** (default) | `docker-compose.gpu.yml` | Qwen3-Coder-30B-A3B on GPU + RAM, plus a 1.5B autocomplete model on the GPU | normal use |
-| **`cpu`** | `docker-compose.cpu.yml` | the same model (Q3) on CPU + RAM; the local model is optional (`--local-model off`) | CPU vs. GPU comparison, GPU busy, or on battery |
+| **`gpu`** (default) | `docker-compose.gpu.yml` | Qwen3-Coder-30B-A3B on GPU + RAM: one model for chat, agent, autocomplete and memory | normal use |
+| **`cpu`** | `docker-compose.cpu.yml` | the same model file on CPU + RAM; the local model is optional (`--local-model off`) | CPU vs. GPU comparison, GPU busy, or on battery |
 
 The profile writes the right Compose file into `.env` (`COMPOSE_FILE`), so a plain `docker compose ...` always uses it. The shared services are identical in both files, and `scripts/check-compose.sh` verifies that.
 
@@ -16,7 +16,7 @@ The profile writes the right Compose file into `.env` (`COMPOSE_FILE`), so a pla
 | Orchestration and memory | **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** (Nous Research) | Agent loop, tools (files, terminal, web), skills that improve with use, session history, ACP for editors |
 | Long-term memory | **[Hindsight](https://github.com/vectorize-io/hindsight)** (Hermes memory provider) | Fact and entity extraction, semantic recall and reflection, stored in Postgres + pgvector |
 | Routing and management | **[LiteLLM](https://github.com/BerriAI/litellm) proxy** | One OpenAI-compatible endpoint, model aliases, per-user virtual keys, rate limits, usage logs, optional cloud fallback |
-| Local models | **llama.cpp server** (CPU or CUDA) | `coder` / `autocomplete` / `memory` routes. Model choice per profile: [docs/models.md](docs/models.md) |
+| Local model | **llama.cpp server** (CPU or CUDA), model pulled from Docker Hub (`ai/qwen3-coder`) | `coder` / `autocomplete` / `memory` routes. Model choice per profile: [docs/models.md](docs/models.md) |
 | Persistence | **PostgreSQL 17 + pgvector** | LiteLLM (keys, spend, logs) and Hindsight (memories, embeddings) |
 
 ```mermaid
@@ -30,14 +30,13 @@ flowchart LR
     HM["Hermes Agent :8642"]
     HS["Hindsight :8888"]
     C["llm-coder<br/>llama.cpp"]
-    A["llm-autocomplete<br/>(gpu profile)"]
     PG[("Postgres + pgvector")]
   end
   VS -- "coder / autocomplete / hermes-agent" --> LL
   ACP -- "docker exec hermes acp" --> HM
   LL -- "hermes-agent" --> HM
   HM -- "model: coder" --> LL
-  LL --> C & A
+  LL -- "coder / autocomplete / memory" --> C
   HM -- memory --> HS
   HS -- "model: memory" --> LL
   HS --> PG
@@ -69,7 +68,7 @@ Step-by-step: **[docs/setup-wsl.md](docs/setup-wsl.md)**
 cd ~ && git clone https://github.com/wyhitomi/ai-stack.git && cd ~/ai-stack
 scripts/install-docker-wsl.sh              # Docker + NVIDIA toolkit (once; may ask for `wsl --shutdown`)
 scripts/bootstrap.sh                       # gpu profile (or: --profile cpu)
-docker compose logs -f llm-coder           # first start downloads the model (~19 GB)
+docker compose logs -f llm-coder           # first start downloads the model from Docker Hub (18.6 GB)
 scripts/doctor.sh                          # budget + every hop + a real inference
 ```
 
