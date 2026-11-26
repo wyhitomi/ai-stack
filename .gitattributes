@@ -1,0 +1,15 @@
+# Keep Unix line endings for everything that runs or is read inside WSL/Docker,
+# even when the repo is cloned on Windows (core.autocrlf=true would otherwise
+# turn "#!/usr/bin/env bash" into "bash\r" and add \r to .env values).
+*           text=auto eol=lf
+*.sh        text eol=lf
+*.env       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.tmpl      text eol=lf
+*.md        text eol=lf
+.env.example text eol=lf
+# PowerShell runs on Windows: CRLF is its native format
+*.ps1       text eol=crlf
+*.jsonc     text eol=lf

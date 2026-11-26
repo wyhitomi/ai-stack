@@ -70,7 +70,16 @@ docker run --rm --gpus all ubuntu:24.04 nvidia-smi   # must show the GPU, CUDA >
 
 **B) Docker Desktop** with the WSL2 backend and WSL integration on for your distro. GPU support is built in. Docker Desktop publishes ports on Windows directly, so in step 4 only the regular Windows firewall rule matters.
 
-## 3. Keep code in the Linux filesystem
+## 3. Clone this repo inside WSL, and keep code in the Linux filesystem
+
+Clone **from the Ubuntu (WSL) terminal into your Linux home**, not from PowerShell into `C:\...`:
+
+```bash
+cd ~ && git clone https://github.com/wyhitomi/ai-stack.git && cd ~/ai-stack
+scripts/bootstrap.sh
+```
+
+A clone on the Windows drive (`/mnt/c/...`) breaks the stack: Postgres can't set permissions on its data folder there, and file I/O is 5–10x slower. `bootstrap.sh` refuses to run from `/mnt/`. `.gitattributes` keeps Unix line endings even if Git on Windows checks the files out.
 
 Put repositories under `~/code` (the default `WORKSPACE_DIR`), **not** under `/mnt/c/...`. File access across the 9P bridge is 5–10x slower and breaks file watchers. From Windows the files are still reachable at `\\wsl$\Ubuntu-24.04\home\<you>\code`.
 

@@ -65,7 +65,8 @@ Step-by-step: **[docs/setup-wsl.md](docs/setup-wsl.md)**
 ## Quick start
 
 ```bash
-git clone <this repo> ~/ai-stack && cd ~/ai-stack
+# in the Ubuntu (WSL) terminal — not PowerShell, not under /mnt/c
+cd ~ && git clone https://github.com/wyhitomi/ai-stack.git && cd ~/ai-stack
 scripts/bootstrap.sh                       # gpu profile (or: --profile cpu)
 docker compose logs -f llm-coder           # first start downloads the model (~19 GB)
 scripts/doctor.sh                          # budget + every hop + a real inference

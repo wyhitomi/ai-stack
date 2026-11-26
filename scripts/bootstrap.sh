@@ -36,6 +36,16 @@ PROFILE="${PROFILE:-gpu}"
 [[ -f "profiles/$PROFILE/stack.env" ]] || die "Unknown profile '$PROFILE'. Available: $(ls profiles | paste -sd' ')"
 
 # ── Pre-flight ───────────────────────────────────────────────────────────────
+# The repo must live in the Linux filesystem: on /mnt/c (the Windows drive)
+# Postgres cannot chmod its data dir and fails to start, and I/O is 5-10x slower.
+if [[ "$PWD" == /mnt/* ]]; then
+  die "The repo is on the Windows drive ($PWD). Clone it inside WSL instead:
+      cd ~ && git clone <repo-url> ai-stack && cd ~/ai-stack && scripts/bootstrap.sh"
+fi
+# A Windows checkout with CRLF line endings breaks .env and YAML parsing too.
+if grep -q $'\r' .env.example docker-compose.gpu.yml 2>/dev/null; then
+  die "Files have Windows (CRLF) line endings. Re-clone inside WSL (see above) or run: git config core.autocrlf input && git rm -rq --cached . && git reset --hard"
+fi
 command -v docker >/dev/null || die "docker not found. See docs/setup-wsl.md."
 docker compose version >/dev/null 2>&1 || die "docker compose v2 plugin not found."
 docker info >/dev/null 2>&1 || die "Docker daemon not reachable (is it running? are you in the docker group?)."
